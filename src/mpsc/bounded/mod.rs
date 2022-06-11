@@ -166,7 +166,10 @@ impl<T> Receiver<T> {
     pub fn poll_recv(&self, cx: &mut Context<'_>) -> Poll<Result<T, RecvError>> {
         loop {
             match unsafe { self.0.queue.pop() } {
-                Some(value) => return Poll::Ready(Ok(value)),
+                Some(value) => {
+                    self.0.senders.wake();
+                    return Poll::Ready(Ok(value));
+                }
                 _ if self.0.is_disconnected() => return Poll::Ready(Err(RecvError)),
                 _ => {}
             }
