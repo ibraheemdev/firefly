@@ -26,6 +26,9 @@ struct Channel<T> {
 
 pub struct Sender<T>(managed::Sender<Channel<T>, { queue::MAX_SENDERS }>);
 
+unsafe impl<T: Send> Send for Sender<T> {}
+unsafe impl<T: Send> Sync for Sender<T> {}
+
 impl<T> Sender<T> {
     pub fn send(&self, value: T) -> Result<(), SendError<T>> {
         if self.0.is_disconnected() {
@@ -39,6 +42,9 @@ impl<T> Sender<T> {
 }
 
 pub struct Receiver<T>(managed::Receiver<Channel<T>, 1>);
+
+unsafe impl<T: Send> Send for Receiver<T> {}
+// unsafe impl<T> !Sync for Sender<T> {}
 
 impl<T> Receiver<T> {
     pub fn try_recv(&self) -> Result<T, TryRecvError> {

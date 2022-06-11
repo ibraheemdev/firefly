@@ -28,6 +28,9 @@ struct Channel<T> {
 
 pub struct Sender<T>(managed::Sender<Channel<T>, { usize::MAX }>);
 
+unsafe impl<T: Send> Send for Sender<T> {}
+unsafe impl<T: Send> Sync for Sender<T> {}
+
 impl<T> Sender<T> {
     pub fn try_send(&self, value: T) -> Result<(), TrySendError<T>> {
         match self.0.queue.push(value) {
@@ -139,6 +142,9 @@ impl<T> Sender<T> {
 }
 
 pub struct Receiver<T>(managed::Receiver<Channel<T>, 1>);
+
+unsafe impl<T: Send> Send for Receiver<T> {}
+// unsafe impl<T> !Sync for Sender<T> {}
 
 impl<T> Receiver<T> {
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
