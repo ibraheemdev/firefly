@@ -1,4 +1,4 @@
-use crate::utils::{self, CachePadded, FetchAddPtr, StrictProvenance, UnsafeDeref};
+use crate::util::{self, CachePadded, FetchAddPtr, StrictProvenance, UnsafeDeref};
 
 use std::cell::{Cell, UnsafeCell};
 use std::mem::{ManuallyDrop, MaybeUninit};
@@ -271,7 +271,7 @@ impl Block<()> {
 
 impl<T> Block<T> {
     fn alloc() -> *mut Block<T> {
-        unsafe { Box::into_raw(utils::box_zeroed()) }
+        unsafe { Box::into_raw(util::box_zeroed()) }
     }
 
     unsafe fn dealloc(block: *mut Block<T>) {

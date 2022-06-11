@@ -1,10 +1,11 @@
-use crate::utils::CachePadded;
+use crate::util::CachePadded;
+
 use std::cell::{Cell, UnsafeCell};
 use std::mem::{drop, MaybeUninit};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct Queue<T> {
-    sema: CachePadded<atomic::Guard>,
+    sema: CachePadded<atomic::Semaphore>,
     tail: CachePadded<atomic::Counter>,
     head: CachePadded<Cell<usize>>,
     slots: Box<[Slot<T>]>,
@@ -22,7 +23,7 @@ impl<T> Queue<T> {
     pub fn new(capacity: usize) -> Self {
         let capacity = capacity.next_power_of_two();
         Self {
-            sema: CachePadded(atomic::Guard::new(capacity)),
+            sema: CachePadded(atomic::Semaphore::new(capacity)),
             tail: CachePadded(atomic::Counter::default()),
             head: CachePadded(Cell::new(0)),
             slots: (0..capacity)
@@ -39,7 +40,7 @@ impl<T> Queue<T> {
             return Err(value);
         }
 
-        let pos = self.tail.inc_gen();
+        let pos = self.tail.fetch_inc();
         let index = pos & (self.slots.len() - 1);
 
         Ok(unsafe {
@@ -47,6 +48,12 @@ impl<T> Queue<T> {
             slot.value.get().write(MaybeUninit::new(value));
             slot.stored.store(true, Ordering::Release);
         })
+    }
+
+    pub unsafe fn is_empty(&self) -> bool {
+        let head = self.head.get();
+        let tail = self.tail.load();
+        head == tail
     }
 
     pub unsafe fn pop(&self) -> Option<T> {
@@ -80,9 +87,9 @@ impl<T> Drop for Queue<T> {
 mod atomic {
     use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 
-    pub struct Guard(AtomicIsize);
+    pub struct Semaphore(AtomicIsize);
 
-    impl Guard {
+    impl Semaphore {
         pub fn new(permits: usize) -> Self {
             Self(AtomicIsize::new(permits.try_into().unwrap()))
         }
@@ -112,8 +119,12 @@ mod atomic {
     pub struct Counter(AtomicUsize);
 
     impl Counter {
-        pub fn inc_gen(&self) -> usize {
+        pub fn fetch_inc(&self) -> usize {
             self.0.fetch_add(1, Ordering::Relaxed)
+        }
+
+        pub fn load(&self) -> usize {
+            self.0.load(Ordering::Relaxed)
         }
     }
 }
@@ -122,9 +133,9 @@ mod atomic {
 mod atomic {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    pub struct Guard(AtomicUsize);
+    pub struct Semaphore(AtomicUsize);
 
-    impl Guard {
+    impl Semaphore {
         pub fn new(permits: usize) -> Self {
             Self(AtomicUsize::new(permits))
         }
@@ -142,8 +153,12 @@ mod atomic {
     pub struct Counter(AtomicUsize);
 
     impl Counter {
-        pub fn inc_gen(&self) -> usize {
+        pub fn fetch_inc(&self) -> usize {
             fetch_update(&self.0, Ordering::Relaxed, |v| Some(v + 1)).unwrap()
+        }
+
+        pub fn load(&self) -> usize {
+            self.0.load(Ordering::Relaxed)
         }
     }
 

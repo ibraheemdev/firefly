@@ -1,9 +1,10 @@
+pub mod intrusive_list;
+
 use std::alloc::{self, Layout};
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::task::{RawWaker, RawWakerVTable, Waker};
 
-/// Pads and aligns a value to the length of a cache line.
 #[cfg_attr(
     any(
         target_arch = "x86_64",
@@ -158,19 +159,4 @@ unsafe impl<T> StrictProvenance for *mut T {
     fn map_addr(self, f: impl FnOnce(usize) -> usize) -> Self {
         self.with_addr(f(self.addr()))
     }
-}
-
-pub fn sentinel_waker() -> Waker {
-    static SENTINEL_VTABLE: RawWakerVTable = RawWakerVTable::new(|_| raw(), |_| {}, |_| {}, |_| {});
-
-    fn raw() -> RawWaker {
-        RawWaker::new(ptr::null_mut(), &SENTINEL_VTABLE)
-    }
-
-    unsafe { Waker::from_raw(raw()) }
-}
-
-pub fn waker_is_sentinel(waker: &Waker) -> bool {
-    // compares the vtable address
-    waker.will_wake(&sentinel_waker())
 }

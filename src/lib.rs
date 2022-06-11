@@ -2,11 +2,11 @@
 
 pub mod mpsc;
 
+mod blocking;
 mod error;
 mod managed;
-mod utils;
-mod waker;
-mod blocking;
+mod util;
+mod wait;
 
 pub use error::{RecvError, RecvTimeoutError, TryRecvError};
 pub use error::{SendError, SendTimeoutError, TrySendError};

@@ -1,4 +1,4 @@
-use crate::utils::UnsafeDeref;
+use crate::util::UnsafeDeref;
 
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

@@ -1,7 +1,7 @@
 mod queue;
 
-use crate::{blocking, error::*};
-use crate::{managed, waker};
+use crate::error::*;
+use crate::{blocking, managed, wait};
 
 use std::future::Future;
 use std::hint;
@@ -12,7 +12,7 @@ use std::task::{Context, Poll};
 pub(super) fn new<T>() -> (Sender<T>, Receiver<T>) {
     let channel = Channel {
         queue: queue::Queue::new(),
-        waker: waker::Cell::new(),
+        receiver: wait::Cell::new(),
     };
 
     let (tx, rx) = managed::manage(channel);
@@ -21,7 +21,7 @@ pub(super) fn new<T>() -> (Sender<T>, Receiver<T>) {
 
 struct Channel<T> {
     queue: queue::Queue<T>,
-    waker: waker::Cell,
+    receiver: wait::Cell,
 }
 
 pub struct Sender<T>(managed::Sender<Channel<T>, { queue::MAX_SENDERS }>);
@@ -33,7 +33,7 @@ impl<T> Sender<T> {
         }
 
         self.0.queue.push(value);
-        self.0.waker.wake();
+        self.0.receiver.wake();
         Ok(())
     }
 }
@@ -71,9 +71,9 @@ impl<T> Receiver<T> {
                 _ => {}
             }
 
-            match unsafe { self.0.waker.register(cx.waker()) } {
-                waker::Status::Registered => return Poll::Pending,
-                waker::Status::Retry => hint::spin_loop(),
+            match unsafe { self.0.receiver.register(cx.waker()) } {
+                wait::Status::Registered => return Poll::Pending,
+                wait::Status::Awoke => hint::spin_loop(),
             }
         }
     }
@@ -97,7 +97,7 @@ impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
         unsafe {
             self.0.drop(|| {
-                self.0.waker.wake();
+                self.0.receiver.wake();
             })
         }
     }
