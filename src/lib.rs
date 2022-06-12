@@ -1,6 +1,7 @@
 #![allow(dead_code, unused, unstable_name_collisions)]
 
 pub mod mpsc;
+pub mod mpmc;
 
 mod blocking;
 mod error;

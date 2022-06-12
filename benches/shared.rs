@@ -46,6 +46,10 @@ impl_chan! {
     firefly::mpsc::bounded::Receiver<T> |c| { c.recv_blocking().map_err(drop) };
 }
 impl_chan! {
+    firefly::mpmc::bounded::Sender<T> |c, val| { c.send_blocking(val).map_err(drop) };
+    firefly::mpmc::bounded::Receiver<T> |c| { c.recv_blocking().map_err(drop) };
+}
+impl_chan! {
     thingbuf::mpsc::blocking::Sender<T> |c, val| { c.send(val).map_err(drop) };
     thingbuf::mpsc::blocking::Receiver<T> |c| { c.recv().ok_or(()) };
 }
