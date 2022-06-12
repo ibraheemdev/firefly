@@ -44,7 +44,7 @@ impl<T> Sender<T> {
 pub struct Receiver<T>(managed::Receiver<Channel<T>, 1>);
 
 unsafe impl<T: Send> Send for Receiver<T> {}
-// unsafe impl<T> !Sync for Sender<T> {}
+// impl<T> !Sync for Receiver<T> {}
 
 impl<T> Receiver<T> {
     pub fn try_recv(&self) -> Result<T, TryRecvError> {

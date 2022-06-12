@@ -96,7 +96,7 @@ impl Cell {
 
             let mut new = state | WOKE;
             if state & REGISTERING == 0 {
-                state |= WAKING
+                new |= WAKING
             }
 
             match self
@@ -111,6 +111,8 @@ impl Cell {
                     if let Some(waker) = waker {
                         waker.wake();
                     }
+
+                    return;
                 }
                 Ok(_) => return,
                 Err(found) => state = found,

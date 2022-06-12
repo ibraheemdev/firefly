@@ -103,7 +103,7 @@ impl<T> SendError<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_channel::unbounded;
+    /// use firefly::mpsc::unbounded;
     ///
     /// let (s, r) = unbounded();
     /// drop(r);
@@ -151,7 +151,7 @@ impl<T> TrySendError<T> {
     /// # Examples
     ///
     /// ```
-    /// use crossbeam_channel::bounded;
+    /// use firefly::mpsc::bounded;
     ///
     /// let (s, r) = bounded(0);
     ///
@@ -215,13 +215,12 @@ impl<T> SendTimeoutError<T> {
     ///
     /// ```
     /// use std::time::Duration;
-    /// use crossbeam_channel::unbounded;
+    /// use firefly::mpsc::unbounded;
     ///
-    /// let (s, r) = unbounded();
-    ///
-    /// if let Err(err) = s.send_timeout("foo", Duration::from_secs(1)) {
-    ///     assert_eq!(err.into_inner(), "foo");
-    /// }
+    /// // let (s, r) = unbounded();
+    /// // if let Err(err) = s.send_timeout("foo", Duration::from_secs(1)) {
+    /// //     assert_eq!(err.into_inner(), "foo");
+    /// // }
     /// ```
     pub fn into_inner(self) -> T {
         match self {

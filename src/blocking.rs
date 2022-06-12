@@ -20,7 +20,7 @@ where
                 return value;
             }
 
-            while parker.parked.swap(true, Ordering::Acquire) {
+            while !parker.notified.swap(false, Ordering::Acquire) {
                 thread::park();
             }
         }
@@ -29,13 +29,13 @@ where
 
 struct Parker {
     thread: Thread,
-    parked: AtomicBool,
+    notified: AtomicBool,
 }
 
 thread_local! {
     static PARKER: Parker = Parker {
         thread: thread::current(),
-        parked: AtomicBool::new(true)
+        notified: AtomicBool::new(false)
     };
 }
 
@@ -45,15 +45,15 @@ static VTABLE: RawWakerVTable = {
     }
 
     unsafe fn wake(data: *const ()) {
-        wake_by_ref(data)
+        let parker = &*(data as *const Parker);
+        let parked = parker.notified.swap(true, Ordering::Release);
+        if !parked {
+            parker.thread.unpark();
+        }
     }
 
     unsafe fn wake_by_ref(data: *const ()) {
-        let parker = &*(data as *const Parker);
-        let parked = parker.parked.swap(false, Ordering::Release);
-        if parked {
-            parker.thread.unpark();
-        }
+        wake(data)
     }
 
     unsafe fn destroy(_: *const ()) {}
