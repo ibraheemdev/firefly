@@ -1,7 +1,8 @@
 mod queue;
 
 use crate::error::*;
-use crate::{blocking, managed, wait};
+use crate::wait::WaitQueue;
+use crate::{blocking, rc};
 
 use std::future::Future;
 use std::hint;
@@ -12,19 +13,19 @@ use std::task::{Context, Poll};
 pub(super) fn new<T>() -> (Sender<T>, Receiver<T>) {
     let channel = Channel {
         queue: queue::Queue::new(),
-        receivers: wait::Queue::new(),
+        receivers: WaitQueue::new(),
     };
 
-    let (tx, rx) = managed::manage(channel);
+    let (tx, rx) = rc::alloc(channel);
     (Sender(tx), Receiver(rx))
 }
 
 struct Channel<T> {
     queue: queue::Queue<T>,
-    receivers: wait::Queue,
+    receivers: WaitQueue,
 }
 
-pub struct Sender<T>(managed::Sender<Channel<T>, { queue::MAX_SENDERS }>);
+pub struct Sender<T>(rc::Sender<Channel<T>, { queue::MAX_SENDERS }>);
 
 unsafe impl<T: Send> Send for Sender<T> {}
 unsafe impl<T: Send> Sync for Sender<T> {}
@@ -41,7 +42,7 @@ impl<T> Sender<T> {
     }
 }
 
-pub struct Receiver<T>(managed::Receiver<Channel<T>, { queue::MAX_RECEIVERS }>);
+pub struct Receiver<T>(rc::Receiver<Channel<T>, { queue::MAX_RECEIVERS }>);
 
 unsafe impl<T: Send> Send for Receiver<T> {}
 // impl<T> !Sync for Receiver<T> {}

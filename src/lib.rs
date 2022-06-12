@@ -1,11 +1,11 @@
 #![allow(dead_code, unused, unstable_name_collisions)]
 
-pub mod mpsc;
 pub mod mpmc;
+pub mod mpsc;
 
 mod blocking;
 mod error;
-mod managed;
+mod rc;
 mod util;
 mod wait;
 

@@ -1,7 +1,8 @@
 mod queue;
 
 use crate::error::*;
-use crate::{blocking, managed, wait};
+use crate::wait::WaitCell;
+use crate::{blocking, rc};
 
 use std::future::Future;
 use std::hint;
@@ -12,19 +13,19 @@ use std::task::{Context, Poll};
 pub(super) fn new<T>() -> (Sender<T>, Receiver<T>) {
     let channel = Channel {
         queue: queue::Queue::new(),
-        receiver: wait::Cell::new(),
+        receiver: WaitCell::new(),
     };
 
-    let (tx, rx) = managed::manage(channel);
+    let (tx, rx) = rc::alloc(channel);
     (Sender(tx), Receiver(rx))
 }
 
 struct Channel<T> {
     queue: queue::Queue<T>,
-    receiver: wait::Cell,
+    receiver: WaitCell,
 }
 
-pub struct Sender<T>(managed::Sender<Channel<T>, { queue::MAX_SENDERS }>);
+pub struct Sender<T>(rc::Sender<Channel<T>, { queue::MAX_SENDERS }>);
 
 unsafe impl<T: Send> Send for Sender<T> {}
 unsafe impl<T: Send> Sync for Sender<T> {}
@@ -41,7 +42,7 @@ impl<T> Sender<T> {
     }
 }
 
-pub struct Receiver<T>(managed::Receiver<Channel<T>, 1>);
+pub struct Receiver<T>(rc::Receiver<Channel<T>, 1>);
 
 unsafe impl<T: Send> Send for Receiver<T> {}
 // impl<T> !Sync for Receiver<T> {}
@@ -77,9 +78,9 @@ impl<T> Receiver<T> {
                 _ => {}
             }
 
-            match unsafe { self.0.receiver.register(cx.waker()) } {
-                wait::Status::Registered => return Poll::Pending,
-                wait::Status::Awoke => hint::spin_loop(),
+            match unsafe { self.0.receiver.poll(cx.waker()) } {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(_) => hint::spin_loop(),
             }
         }
     }

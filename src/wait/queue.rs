@@ -12,7 +12,7 @@ use std::task::{Context, Poll, Waker};
 
 use usync::Mutex;
 
-pub struct Queue {
+pub struct WaitQueue {
     state: AtomicU8,
     list: Mutex<LinkedList<Waiter>>,
 }
@@ -22,22 +22,13 @@ pub struct Waiter {
     waker: Cell<Option<Waker>>,
 }
 
-impl Waiter {
-    pub fn new() -> Node<Waiter> {
-        Node::new(Waiter {
-            state: AtomicU8::new(EMPTY),
-            waker: Cell::new(None),
-        })
-    }
-}
-
 const EMPTY: u8 = 0;
 const WAITING: u8 = 1;
 const WOKE: u8 = 2;
 
-impl Queue {
-    pub fn new() -> Queue {
-        Queue {
+impl WaitQueue {
+    pub fn new() -> WaitQueue {
+        WaitQueue {
             state: AtomicU8::new(EMPTY),
             list: Mutex::new(LinkedList::new()),
         }
@@ -63,7 +54,7 @@ impl Queue {
         .await
     }
 
-    pub fn register(&self, node: Pin<&mut Node<Waiter>>, waker: &Waker) -> Status {
+    fn register(&self, node: Pin<&mut Node<Waiter>>, waker: &Waker) -> Status {
         if self.state.load(Ordering::Relaxed) == WOKE {
             if self
                 .state
@@ -112,7 +103,7 @@ impl Queue {
         Status::Registered
     }
 
-    pub fn poll(&self, node: Pin<&mut Node<Waiter>>, waker: &Waker) -> Poll<()> {
+    fn poll(&self, node: Pin<&mut Node<Waiter>>, waker: &Waker) -> Poll<()> {
         if node.data.state.load(Ordering::Acquire) == WOKE {
             return Poll::Ready(());
         }
@@ -131,6 +122,24 @@ impl Queue {
         }
 
         Poll::Pending
+    }
+
+    fn remove(&self, waiter: Pin<&mut Node<Waiter>>) {
+        if waiter.data.state.load(Ordering::Relaxed) != WAITING {
+            return;
+        }
+
+        let mut list = self.list.lock();
+
+        unsafe {
+            list.remove(waiter);
+        }
+
+        if list.is_empty() {
+            let _ =
+                self.state
+                    .compare_exchange(WAITING, EMPTY, Ordering::Release, Ordering::Relaxed);
+        }
     }
 
     pub fn wake(&self) -> bool {
@@ -195,33 +204,15 @@ impl Queue {
             }
         });
     }
-
-    pub fn remove(&self, waiter: Pin<&mut Node<Waiter>>) {
-        if waiter.data.state.load(Ordering::Relaxed) != WAITING {
-            return;
-        }
-
-        let mut list = self.list.lock();
-
-        unsafe {
-            list.remove(waiter);
-        }
-
-        if list.is_empty() {
-            let _ =
-                self.state
-                    .compare_exchange(WAITING, EMPTY, Ordering::Release, Ordering::Relaxed);
-        }
-    }
 }
 
 pin_project_lite::pin_project! {
-    struct PollFn<'a, F, T> {
+    struct PollFn<'queue, F, T> {
         poll_fn: F,
         state: State,
         #[pin]
         waiter: Node<Waiter>,
-        queue: &'a Queue,
+        queue: &'queue WaitQueue,
         _value: PhantomData<T>
     }
 
@@ -278,9 +269,7 @@ where
                     *this.state = State::Done;
                 }
                 State::Done => match (this.poll_fn)() {
-                    Poll::Ready(value) => {
-                        return Poll::Ready(value);
-                    }
+                    Poll::Ready(value) => return Poll::Ready(value),
                     Poll::Pending => match this.queue.register(this.waiter, cx.waker()) {
                         Status::Registered => {
                             *this.state = State::Registered;

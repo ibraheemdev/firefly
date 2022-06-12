@@ -1,8 +1,8 @@
 mod cell;
 mod queue;
 
-pub use cell::Cell;
-pub use queue::Queue;
+pub use cell::WaitCell;
+pub use queue::WaitQueue;
 
 pub enum Status {
     Registered,

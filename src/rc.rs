@@ -3,7 +3,7 @@ use crate::util::UnsafeDeref;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-pub fn manage<C, const MAX_SENDERS: usize, const MAX_RECEIVERS: usize>(
+pub fn alloc<C, const MAX_SENDERS: usize, const MAX_RECEIVERS: usize>(
     chan: C,
 ) -> (Sender<C, MAX_SENDERS>, Receiver<C, MAX_RECEIVERS>) {
     let rc = Box::into_raw(Box::new(Rc {
@@ -25,7 +25,7 @@ struct Rc<T> {
     chan: T,
 }
 
-pub struct Sender<T, const MAX: usize> {
+pub struct Sender<T, const MAX: usize = { isize::MAX as _ }> {
     rc: *mut Rc<T>,
 }
 
@@ -68,7 +68,7 @@ impl<T, const MAX: usize> Deref for Sender<T, MAX> {
     }
 }
 
-pub struct Receiver<T, const MAX: usize> {
+pub struct Receiver<T, const MAX: usize = { isize::MAX as _ }> {
     rc: *mut Rc<T>,
 }
 
