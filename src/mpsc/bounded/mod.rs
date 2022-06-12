@@ -67,7 +67,6 @@ impl<T> Sender<T> {
         enum State {
             Started,
             Registered,
-            Done,
         }
 
         impl<'a, T> Future for SendFuture<'a, T> {
@@ -102,14 +101,10 @@ impl<T> Sender<T> {
                             }
                         }
                         State::Registered => {
-                            if !chan.senders.verify(this.waiter, cx.waker()) {
+                            if chan.senders.poll(this.waiter, cx.waker()).is_pending() {
                                 return Poll::Pending;
                             }
 
-                            *this.state = State::Done;
-                            continue;
-                        }
-                        State::Done => {
                             let value = this.value.take().unwrap();
                             match this.sender.try_send(value) {
                                 Ok(()) => return Poll::Ready(Ok(())),

@@ -6,7 +6,7 @@ use std::cell::{Cell, UnsafeCell};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Mutex;
-use std::task::Waker;
+use std::task::{Poll, Waker};
 
 pub struct Queue {
     state: AtomicU8,
@@ -88,15 +88,15 @@ impl Queue {
         Status::Registered
     }
 
-    pub fn verify(&self, node: Pin<&mut Waiter>, waker: &Waker) -> bool {
+    pub fn poll(&self, node: Pin<&mut Waiter>, waker: &Waker) -> Poll<()> {
         if self.state.load(Ordering::Acquire) == WOKE {
-            return true;
+            return Poll::Ready(());
         }
 
         let mut list = self.list.lock().unwrap();
 
         if node.data.state.load(Ordering::Acquire) == WOKE {
-            return true;
+            return Poll::Ready(());
         }
 
         unsafe {
@@ -106,7 +106,7 @@ impl Queue {
             }
         }
 
-        false
+        Poll::Pending
     }
 
     pub fn wake(&self) -> bool {
