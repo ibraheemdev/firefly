@@ -126,6 +126,7 @@ impl Queue {
         }
 
         let mut list = self.list.lock();
+        let mut state = self.state.load(Ordering::Acquire);
 
         match state {
             EMPTY | WOKE => {
