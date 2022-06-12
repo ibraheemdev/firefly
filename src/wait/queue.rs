@@ -89,7 +89,7 @@ impl Queue {
     }
 
     pub fn poll(&self, node: Pin<&mut Waiter>, waker: &Waker) -> Poll<()> {
-        if self.state.load(Ordering::Acquire) == WOKE {
+        if node.data.state.load(Ordering::Acquire) == WOKE {
             return Poll::Ready(());
         }
 
