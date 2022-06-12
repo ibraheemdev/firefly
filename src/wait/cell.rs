@@ -87,6 +87,7 @@ impl Cell {
     }
 
     pub fn wake(&self) {
+        fence(Ordering::SeqCst);
         let mut state = self.state.load(Ordering::Relaxed);
 
         loop {
