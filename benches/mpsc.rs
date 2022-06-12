@@ -11,12 +11,13 @@ fn bench_all(c: &mut Criterion) {
     let mut group = c.benchmark_group("mpsc/unbounded");
     group.sample_size(20);
 
-    bench_unbounded("firefly", &mut group, |_| firefly::mpsc::unbounded());
-    bench_unbounded("flume", &mut group, |_| flume::unbounded());
-    bench_unbounded("std::sync::mpsc", &mut group, |_| {
+    bench("firefly", &mut group, |_| firefly::mpsc::unbounded());
+    bench("firefly-mpmc", &mut group, |_| firefly::mpmc::unbounded());
+    bench("flume", &mut group, |_| flume::unbounded());
+    bench("std::sync::mpsc", &mut group, |_| {
         std::sync::mpsc::channel()
     });
-    bench_unbounded("crossbeam-channel", &mut group, |_| {
+    bench("crossbeam-channel", &mut group, |_| {
         crossbeam::channel::unbounded()
     });
 
@@ -25,16 +26,16 @@ fn bench_all(c: &mut Criterion) {
     let mut group = c.benchmark_group("mpsc/bounded/uncontended");
     group.sample_size(20);
 
-    bench_unbounded("firefly", &mut group, |x| firefly::mpsc::bounded(x));
-    bench_unbounded("firefly-mpmc", &mut group, |x| firefly::mpmc::bounded(x));
-    bench_unbounded("flume", &mut group, |x| flume::bounded(x));
-    bench_unbounded("std::sync::mpsc", &mut group, |x| {
+    bench("firefly", &mut group, |x| firefly::mpsc::bounded(x));
+    bench("firefly-mpmc", &mut group, |x| firefly::mpmc::bounded(x));
+    bench("flume", &mut group, |x| flume::bounded(x));
+    bench("std::sync::mpsc", &mut group, |x| {
         std::sync::mpsc::sync_channel(x)
     });
-    bench_unbounded("thingbuf", &mut group, |x| {
+    bench("thingbuf", &mut group, |x| {
         thingbuf::mpsc::blocking::channel(x)
     });
-    bench_unbounded("crossbeam-channel", &mut group, |x| {
+    bench("crossbeam-channel", &mut group, |x| {
         crossbeam::channel::bounded(x)
     });
 
@@ -43,29 +44,26 @@ fn bench_all(c: &mut Criterion) {
     let mut group = c.benchmark_group("mpsc/bounded/contended");
     group.sample_size(20);
 
-    bench_unbounded("firefly", &mut group, |x| firefly::mpsc::bounded(x / 2));
-    bench_unbounded("firefly-mpmc", &mut group, |x| {
+    bench("firefly", &mut group, |x| firefly::mpsc::bounded(x / 2));
+    bench("firefly-mpmc", &mut group, |x| {
         firefly::mpmc::bounded(x / 2)
     });
-    bench_unbounded("flume", &mut group, |x| flume::bounded(x / 2));
-    bench_unbounded("std::sync::mpsc", &mut group, |x| {
+    bench("flume", &mut group, |x| flume::bounded(x / 2));
+    bench("std::sync::mpsc", &mut group, |x| {
         std::sync::mpsc::sync_channel(x / 2)
     });
-    bench_unbounded("thingbuf", &mut group, |x| {
+    bench("thingbuf", &mut group, |x| {
         thingbuf::mpsc::blocking::channel(x / 2)
     });
-    bench_unbounded("crossbeam-channel", &mut group, |x| {
+    bench("crossbeam-channel", &mut group, |x| {
         crossbeam::channel::bounded(x / 2)
     });
 
     group.finish();
 }
 
-fn bench_unbounded<M, S, R>(
-    name: &'static str,
-    g: &mut BenchmarkGroup<'_, M>,
-    chan: impl Fn(usize) -> (S, R),
-) where
+fn bench<M, S, R>(name: &'static str, g: &mut BenchmarkGroup<'_, M>, chan: impl Fn(usize) -> (S, R))
+where
     M: Measurement,
     S: Sender<usize>,
     R: Receiver<usize>,
