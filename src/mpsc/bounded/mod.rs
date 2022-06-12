@@ -67,6 +67,7 @@ impl<T> Sender<T> {
         enum State {
             Started,
             Registered,
+            Done,
         }
 
         impl<'a, T> Future for SendFuture<'a, T> {
@@ -105,6 +106,9 @@ impl<T> Sender<T> {
                                 return Poll::Pending;
                             }
 
+                            *this.state = State::Done;
+                        }
+                        State::Done => {
                             let value = this.value.take().unwrap();
                             match this.sender.try_send(value) {
                                 Ok(()) => return Poll::Ready(Ok(())),
@@ -144,7 +148,10 @@ unsafe impl<T: Send> Send for Receiver<T> {}
 impl<T> Receiver<T> {
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
         match unsafe { self.0.queue.pop() } {
-            Some(value) => Ok(value),
+            Some(value) => {
+                self.0.senders.wake();
+                Ok(value)
+            }
             None if self.0.is_disconnected() => Err(TryRecvError::Disconnected),
             None => Err(TryRecvError::Empty),
         }
@@ -166,12 +173,9 @@ impl<T> Receiver<T> {
 
     pub fn poll_recv(&self, cx: &mut Context<'_>) -> Poll<Result<T, RecvError>> {
         loop {
-            match unsafe { self.0.queue.pop() } {
-                Some(value) => {
-                    self.0.senders.wake();
-                    return Poll::Ready(Ok(value));
-                }
-                _ if self.0.is_disconnected() => return Poll::Ready(Err(RecvError)),
+            match self.try_recv() {
+                Ok(value) => return Poll::Ready(Ok(value)),
+                Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
                 _ => {}
             }
 
