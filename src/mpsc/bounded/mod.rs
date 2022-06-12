@@ -44,95 +44,24 @@ impl<T> Sender<T> {
     }
 
     pub async fn send(&self, value: T) -> Result<(), SendError<T>> {
-        pin_project_lite::pin_project! {
-            struct SendFuture<'a, T> {
-                sender: &'a Sender<T>,
-                state: State,
-                value: Option<T>,
-                #[pin]
-                waiter: wait::Waiter,
-            }
+        let mut state = Some(value);
 
-            impl<'a, T> PinnedDrop for SendFuture<'a, T> {
-                fn drop(mut this: Pin<&mut Self>) {
-                    let this = this.project();
-                    if *this.state == State::Registered {
-                        unsafe { this.sender.0.senders.remove(this.waiter) }
+        self.0
+            .senders
+            .poll_fn(|| {
+                let value = state.take().unwrap();
+                match self.try_send(value) {
+                    Ok(()) => return Poll::Ready(Ok(())),
+                    Err(TrySendError::Disconnected(value)) => {
+                        return Poll::Ready(Err(SendError(value)))
+                    }
+                    Err(TrySendError::Full(value)) => {
+                        state = Some(value);
+                        Poll::Pending
                     }
                 }
-            }
-        }
-
-        #[derive(PartialEq)]
-        enum State {
-            Started,
-            Registered,
-            Done,
-        }
-
-        impl<'a, T> Future for SendFuture<'a, T> {
-            type Output = Result<(), SendError<T>>;
-
-            fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-                loop {
-                    let this = self.as_mut().project();
-                    let chan = &this.sender.0;
-
-                    match this.state {
-                        State::Started => {
-                            let value = this.value.take().unwrap();
-                            match this.sender.try_send(value) {
-                                Ok(()) => return Poll::Ready(Ok(())),
-                                Err(TrySendError::Disconnected(value)) => {
-                                    return Poll::Ready(Err(SendError(value)))
-                                }
-                                Err(TrySendError::Full(value)) => {
-                                    *this.value = Some(value);
-                                }
-                            }
-
-                            match chan.senders.register(this.waiter, cx.waker()) {
-                                wait::Status::Registered => {
-                                    *this.state = State::Registered;
-                                }
-                                wait::Status::Awoke => {
-                                    hint::spin_loop();
-                                    continue;
-                                }
-                            }
-                        }
-                        State::Registered => {
-                            if chan.senders.poll(this.waiter, cx.waker()).is_pending() {
-                                return Poll::Pending;
-                            }
-
-                            *this.state = State::Done;
-                        }
-                        State::Done => {
-                            let value = this.value.take().unwrap();
-                            match this.sender.try_send(value) {
-                                Ok(()) => return Poll::Ready(Ok(())),
-                                Err(TrySendError::Disconnected(value)) => {
-                                    return Poll::Ready(Err(SendError(value)))
-                                }
-                                Err(TrySendError::Full(value)) => {
-                                    *this.value = Some(value);
-                                    *this.state = State::Started;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        SendFuture {
-            sender: self,
-            value: Some(value),
-            waiter: wait::waiter(),
-            state: State::Started,
-        }
-        .await
+            })
+            .await
     }
 
     pub fn send_blocking(&self, value: T) -> Result<(), SendError<T>> {

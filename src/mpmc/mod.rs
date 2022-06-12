@@ -1,4 +1,4 @@
-//! Multi-producer, multi-consumer channels.
+//! Multi-producer, single-consumer channels.
 
 pub mod bounded;
 

@@ -3,29 +3,32 @@ use crate::util::intrusive_list::{LinkedList, Node};
 use crate::util::UnsafeDeref;
 
 use std::cell::{Cell, UnsafeCell};
+use std::future::Future;
+use std::hint;
+use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::task::{Poll, Waker};
+use std::task::{Context, Poll, Waker};
 
 use usync::Mutex;
 
 pub struct Queue {
     state: AtomicU8,
-    list: Mutex<LinkedList<WaiterState>>,
+    list: Mutex<LinkedList<Waiter>>,
 }
 
-pub type Waiter = Node<WaiterState>;
-
-pub fn waiter() -> Waiter {
-    Node::new(WaiterState {
-        state: AtomicU8::new(EMPTY),
-        waker: Cell::new(None),
-    })
-}
-
-pub struct WaiterState {
+pub struct Waiter {
     state: AtomicU8,
     waker: Cell<Option<Waker>>,
+}
+
+impl Waiter {
+    pub fn new() -> Node<Waiter> {
+        Node::new(Waiter {
+            state: AtomicU8::new(EMPTY),
+            waker: Cell::new(None),
+        })
+    }
 }
 
 const EMPTY: u8 = 0;
@@ -40,7 +43,27 @@ impl Queue {
         }
     }
 
-    pub fn register(&self, node: Pin<&mut Waiter>, waker: &Waker) -> Status {
+    #[inline]
+    pub async fn poll_fn<T, F>(&self, poll_fn: F) -> T
+    where
+        F: FnMut() -> Poll<T>,
+    {
+        let waiter = Node::new(Waiter {
+            state: AtomicU8::new(EMPTY),
+            waker: Cell::new(None),
+        });
+
+        PollFn {
+            poll_fn,
+            waiter,
+            queue: self,
+            state: State::Started,
+            _value: PhantomData,
+        }
+        .await
+    }
+
+    pub fn register(&self, node: Pin<&mut Node<Waiter>>, waker: &Waker) -> Status {
         if self.state.load(Ordering::Relaxed) == WOKE {
             if self
                 .state
@@ -89,7 +112,7 @@ impl Queue {
         Status::Registered
     }
 
-    pub fn poll(&self, node: Pin<&mut Waiter>, waker: &Waker) -> Poll<()> {
+    pub fn poll(&self, node: Pin<&mut Node<Waiter>>, waker: &Waker) -> Poll<()> {
         if node.data.state.load(Ordering::Acquire) == WOKE {
             return Poll::Ready(());
         }
@@ -159,7 +182,19 @@ impl Queue {
         false
     }
 
-    pub fn remove(&self, waiter: Pin<&mut Waiter>) {
+    pub fn wake_all(&self) {
+        self.state.swap(WOKE, Ordering::Relaxed);
+
+        let mut list = self.list.lock();
+        list.drain(|waiter| {
+            waiter.data.state.swap(WOKE, Ordering::Relaxed);
+            if let Some(waker) = waiter.data.waker.take() {
+                waker.wake();
+            }
+        });
+    }
+
+    pub fn remove(&self, waiter: Pin<&mut Node<Waiter>>) {
         if waiter.data.state.load(Ordering::Relaxed) != WAITING {
             return;
         }
@@ -176,16 +211,85 @@ impl Queue {
                     .compare_exchange(WAITING, EMPTY, Ordering::Release, Ordering::Relaxed);
         }
     }
+}
 
-    pub fn wake_all(&self) {
-        self.state.swap(WOKE, Ordering::Relaxed);
+pin_project_lite::pin_project! {
+    struct PollFn<'a, F, T> {
+        poll_fn: F,
+        state: State,
+        #[pin]
+        waiter: Node<Waiter>,
+        queue: &'a Queue,
+        _value: PhantomData<T>
+    }
 
-        let mut list = self.list.lock();
-        list.drain(|waiter| {
-            waiter.data.state.swap(WOKE, Ordering::Relaxed);
-            if let Some(waker) = waiter.data.waker.take() {
-                waker.wake();
+    impl<F, T> PinnedDrop for PollFn<'_, F, T> {
+        fn drop(mut this: Pin<&mut Self>) {
+            let this = this.project();
+            if *this.state == State::Registered {
+                unsafe { this.queue.remove(this.waiter) }
             }
-        });
+        }
+    }
+}
+
+#[derive(PartialEq)]
+enum State {
+    Started,
+    Registered,
+    Done,
+}
+
+impl<F, T> Future for PollFn<'_, F, T>
+where
+    F: FnMut() -> Poll<T>,
+{
+    type Output = T;
+
+    #[inline]
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        loop {
+            let this = self.as_mut().project();
+
+            match this.state {
+                State::Started => {
+                    match (this.poll_fn)() {
+                        Poll::Ready(value) => return Poll::Ready(value),
+                        Poll::Pending => {}
+                    }
+
+                    match this.queue.register(this.waiter, cx.waker()) {
+                        Status::Registered => {
+                            *this.state = State::Registered;
+                        }
+                        Status::Awoke => {
+                            hint::spin_loop();
+                            continue;
+                        }
+                    }
+                }
+                State::Registered => {
+                    if this.queue.poll(this.waiter, cx.waker()).is_pending() {
+                        return Poll::Pending;
+                    }
+
+                    *this.state = State::Done;
+                }
+                State::Done => match (this.poll_fn)() {
+                    Poll::Ready(value) => {
+                        return Poll::Ready(value);
+                    }
+                    Poll::Pending => match this.queue.register(this.waiter, cx.waker()) {
+                        Status::Registered => {
+                            *this.state = State::Registered;
+                        }
+                        Status::Awoke => {
+                            hint::spin_loop();
+                            continue;
+                        }
+                    },
+                },
+            }
+        }
     }
 }
