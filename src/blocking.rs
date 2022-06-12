@@ -46,8 +46,7 @@ static VTABLE: RawWakerVTable = {
 
     unsafe fn wake(data: *const ()) {
         let parker = &*(data as *const Parker);
-        let parked = parker.notified.swap(true, Ordering::Release);
-        if !parked {
+        if !parker.notified.swap(true, Ordering::Release) {
             parker.thread.unpark();
         }
     }

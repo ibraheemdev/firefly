@@ -5,12 +5,13 @@ edition = "2021"
 
 [dependencies]
 pin-project-lite = "0.2.9"
-thingbuf = "0.1.3"
+usync = "0.2.1"
 
 [dev-dependencies]
 criterion = "0.3.5"
 crossbeam = "0.8.1"
 flume = "0.10.13"
+thingbuf = "0.1.3"
 
 [[bench]]
 name = "mpsc"

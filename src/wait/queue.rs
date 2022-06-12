@@ -5,8 +5,9 @@ use crate::util::UnsafeDeref;
 use std::cell::{Cell, UnsafeCell};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::Mutex;
 use std::task::{Poll, Waker};
+
+use usync::Mutex;
 
 pub struct Queue {
     state: AtomicU8,
@@ -50,7 +51,7 @@ impl Queue {
             }
         }
 
-        let mut list = self.list.lock().unwrap();
+        let mut list = self.list.lock();
 
         let mut state = self.state.load(Ordering::Acquire);
 
@@ -93,7 +94,7 @@ impl Queue {
             return Poll::Ready(());
         }
 
-        let mut list = self.list.lock().unwrap();
+        let mut list = self.list.lock();
 
         if node.data.state.load(Ordering::Acquire) == WOKE {
             return Poll::Ready(());
@@ -124,7 +125,7 @@ impl Queue {
             }
         }
 
-        let mut list = self.list.lock().unwrap();
+        let mut list = self.list.lock();
 
         match state {
             EMPTY | WOKE => {
@@ -162,7 +163,7 @@ impl Queue {
             return;
         }
 
-        let mut list = self.list.lock().unwrap();
+        let mut list = self.list.lock();
 
         unsafe {
             list.remove(waiter);
@@ -178,7 +179,7 @@ impl Queue {
     pub fn wake_all(&self) {
         self.state.swap(WOKE, Ordering::Relaxed);
 
-        let mut list = self.list.lock().unwrap();
+        let mut list = self.list.lock();
         list.drain(|waiter| {
             waiter.data.state.swap(WOKE, Ordering::Relaxed);
             if let Some(waker) = waiter.data.waker.take() {
