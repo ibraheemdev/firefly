@@ -8,6 +8,7 @@ use std::future::Future;
 use std::hint;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 pub(super) fn new<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
     let channel = Channel {
@@ -45,7 +46,27 @@ impl<T> Sender<T> {
 
     pub async fn send(&self, value: T) -> Result<(), SendError<T>> {
         let mut state = Some(value);
+        self.send_inner(&mut state).await
+    }
 
+    pub fn send_blocking(&self, value: T) -> Result<(), SendError<T>> {
+        unsafe { blocking::block_on(self.send(value)) }
+    }
+
+    pub fn send_blocking_timeout(
+        &self,
+        value: T,
+        timeout: Duration,
+    ) -> Result<(), SendTimeoutError<T>> {
+        let mut state = Some(value);
+
+        match unsafe { blocking::block_on_timeout(self.send_inner(&mut state), timeout) } {
+            Some(value) => value.map_err(SendError::into),
+            None => Err(SendTimeoutError::Timeout(state.take().unwrap())),
+        }
+    }
+
+    pub async fn send_inner(&self, state: &mut Option<T>) -> Result<(), SendError<T>> {
         self.0
             .senders
             .poll_fn(|| {
@@ -54,16 +75,12 @@ impl<T> Sender<T> {
                     Ok(()) => Poll::Ready(Ok(())),
                     Err(TrySendError::Disconnected(value)) => Poll::Ready(Err(SendError(value))),
                     Err(TrySendError::Full(value)) => {
-                        state = Some(value);
+                        *state = Some(value);
                         Poll::Pending
                     }
                 }
             })
             .await
-    }
-
-    pub fn send_blocking(&self, value: T) -> Result<(), SendError<T>> {
-        unsafe { blocking::block_on(self.send(value)) }
     }
 }
 
@@ -115,6 +132,13 @@ impl<T> Receiver<T> {
 
     pub fn recv_blocking(&self) -> Result<T, RecvError> {
         unsafe { blocking::block_on(self.recv()) }
+    }
+
+    pub fn recv_blocking_timeout(&self, timeout: Duration) -> Result<T, RecvTimeoutError> {
+        match unsafe { blocking::block_on_timeout(self.recv(), timeout) } {
+            Some(value) => value.map_err(RecvError::into),
+            None => Err(RecvTimeoutError::Timeout),
+        }
     }
 
     pub fn is_empty(&self) -> bool {

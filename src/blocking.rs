@@ -3,6 +3,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 use std::thread::{self, Thread};
+use std::time::{Duration, Instant};
 
 pub unsafe fn block_on<F>(mut future: F) -> F::Output
 where
@@ -22,6 +23,39 @@ where
 
             while !parker.notified.swap(false, Ordering::Acquire) {
                 thread::park();
+            }
+        }
+    })
+}
+
+pub unsafe fn block_on_timeout<F>(mut future: F, timeout: Duration) -> Option<F::Output>
+where
+    F: Future,
+{
+    let start = Instant::now();
+
+    let mut future = Pin::new_unchecked(&mut future);
+    let mut remaining = timeout;
+
+    PARKER.with(|parker| {
+        let data = parker as *const Parker as *const ();
+        let waker = Waker::from_raw(RawWaker::new(data, &VTABLE));
+        let mut cx = Context::from_waker(&waker);
+
+        loop {
+            if let Poll::Ready(value) = future.as_mut().poll(&mut cx) {
+                return Some(value);
+            }
+
+            while !parker.notified.swap(false, Ordering::Acquire) {
+                thread::park_timeout(remaining);
+
+                let elapsed = start.elapsed();
+                if elapsed >= timeout {
+                    return None;
+                }
+
+                remaining = timeout - elapsed;
             }
         }
     })

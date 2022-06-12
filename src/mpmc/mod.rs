@@ -1,12 +1,15 @@
 //! Multi-producer, multi-consumer channels.
 
-pub mod bounded;
-pub mod unbounded;
+mod bounded;
+mod unbounded;
 
-pub fn unbounded<T>() -> (unbounded::Sender<T>, unbounded::Receiver<T>) {
+pub use bounded::{Receiver, Sender};
+pub use unbounded::{UnboundedReceiver, UnboundedSender};
+
+pub fn unbounded<T>() -> (UnboundedSender<T>, UnboundedReceiver<T>) {
     unbounded::new()
 }
 
-pub fn bounded<T>(capacity: usize) -> (bounded::Sender<T>, bounded::Receiver<T>) {
+pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
     bounded::new(capacity)
 }

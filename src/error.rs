@@ -1,21 +1,17 @@
 use std::error;
 use std::fmt;
 
-/// An error returned from the [`send`] method.
+/// The error returned from the `send` method.
 ///
 /// The message could not be sent because the channel is disconnected.
 ///
 /// The error contains the message so it can be recovered.
-///
-/// [`send`]: super::Sender::send
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub struct SendError<T>(pub T);
 
-/// An error returned from the [`try_send`] method.
+/// The error returned from the `try_send` method.
 ///
 /// The error contains the message being sent so it can be recovered.
-///
-/// [`try_send`]: super::Sender::try_send
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum TrySendError<T> {
     /// The message could not be sent because the channel is full.
@@ -28,11 +24,9 @@ pub enum TrySendError<T> {
     Disconnected(T),
 }
 
-/// An error returned from the [`send_timeout`] method.
+/// The error returned from the `send_timeout` method.
 ///
 /// The error contains the message being sent so it can be recovered.
-///
-/// [`send_timeout`]: super::Sender::send_timeout
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum SendTimeoutError<T> {
     /// The message could not be sent because the channel is full and the operation timed out.
@@ -45,17 +39,13 @@ pub enum SendTimeoutError<T> {
     Disconnected(T),
 }
 
-/// An error returned from the [`recv`] method.
+/// The error returned from the `recv` method.
 ///
 /// A message could not be received because the channel is empty and disconnected.
-///
-/// [`recv`]: super::Receiver::recv
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub struct RecvError;
 
-/// An error returned from the [`try_recv`] method.
-///
-/// [`try_recv`]: super::Receiver::try_recv
+/// The error returned from the `try_recv` method.
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum TryRecvError {
     /// A message could not be received because the channel is empty.
@@ -68,9 +58,7 @@ pub enum TryRecvError {
     Disconnected,
 }
 
-/// An error returned from the [`recv_timeout`] method.
-///
-/// [`recv_timeout`]: super::Receiver::recv_timeout
+/// The error returned from the `recv_blocking_timeout` method.
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum RecvTimeoutError {
     /// A message could not be received because the channel is empty and the operation timed out.
@@ -103,12 +91,10 @@ impl<T> SendError<T> {
     /// # Examples
     ///
     /// ```
-    /// use firefly::mpsc::unbounded;
+    /// let (tx, rx) = firefly::mpsc::unbounded();
+    /// drop(rx);
     ///
-    /// let (s, r) = unbounded();
-    /// drop(r);
-    ///
-    /// if let Err(err) = s.send("foo") {
+    /// if let Err(err) = tx.send("foo") {
     ///     assert_eq!(err.into_inner(), "foo");
     /// }
     /// ```
@@ -151,9 +137,7 @@ impl<T> TrySendError<T> {
     /// # Examples
     ///
     /// ```
-    /// use firefly::mpsc::bounded;
-    ///
-    /// let (s, r) = bounded(0);
+    /// let (tx, rx) = firefly::mpsc::bounded(0);
     ///
     /// if let Err(err) = s.try_send("foo") {
     ///     assert_eq!(err.into_inner(), "foo");
@@ -209,12 +193,11 @@ impl<T> SendTimeoutError<T> {
     ///
     /// ```
     /// use std::time::Duration;
-    /// use firefly::mpsc::unbounded;
     ///
-    /// // let (s, r) = unbounded();
-    /// // if let Err(err) = s.send_timeout("foo", Duration::from_secs(1)) {
-    /// //     assert_eq!(err.into_inner(), "foo");
-    /// // }
+    /// let (tx, rx) = firefly::mpsc::unbounded();
+    /// if let Err(err) = s.send_blocking_timeout("foo", Duration::from_secs(1)) {
+    ///     assert_eq!(err.into_inner(), "foo");
+    /// }
     /// ```
     pub fn into_inner(self) -> T {
         match self {

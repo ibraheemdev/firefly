@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 #![allow(unstable_name_collisions, clippy::collapsible_if)]
 
 pub mod mpmc;

@@ -8,15 +8,16 @@ use std::future::Future;
 use std::hint;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::time::Duration;
 
-pub(super) fn new<T>() -> (Sender<T>, Receiver<T>) {
+pub(super) fn new<T>() -> (UnboundedSender<T>, UnboundedReceiver<T>) {
     let channel = Channel {
         queue: queue::Queue::new(),
         receiver: WaitCell::new(),
     };
 
     let (tx, rx) = rc::alloc(channel);
-    (Sender(tx), Receiver(rx))
+    (UnboundedSender(tx), UnboundedReceiver(rx))
 }
 
 struct Channel<T> {
@@ -24,12 +25,12 @@ struct Channel<T> {
     receiver: WaitCell,
 }
 
-pub struct Sender<T>(rc::Sender<Channel<T>, { queue::MAX_SENDERS }>);
+pub struct UnboundedSender<T>(rc::Sender<Channel<T>, { queue::MAX_SENDERS }>);
 
-unsafe impl<T: Send> Send for Sender<T> {}
-unsafe impl<T: Send> Sync for Sender<T> {}
+unsafe impl<T: Send> Send for UnboundedSender<T> {}
+unsafe impl<T: Send> Sync for UnboundedSender<T> {}
 
-impl<T> Sender<T> {
+impl<T> UnboundedSender<T> {
     pub fn send(&self, value: T) -> Result<(), SendError<T>> {
         if self.0.is_disconnected() {
             return Err(SendError(value));
@@ -41,12 +42,12 @@ impl<T> Sender<T> {
     }
 }
 
-pub struct Receiver<T>(rc::Receiver<Channel<T>, 1>);
+pub struct UnboundedReceiver<T>(rc::Receiver<Channel<T>, 1>);
 
-unsafe impl<T: Send> Send for Receiver<T> {}
+unsafe impl<T: Send> Send for UnboundedReceiver<T> {}
 // impl<T> !Sync for Receiver<T> {}
 
-impl<T> Receiver<T> {
+impl<T> UnboundedReceiver<T> {
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
         match unsafe { self.0.queue.pop() } {
             Some(value) => Ok(value),
@@ -56,7 +57,7 @@ impl<T> Receiver<T> {
     }
 
     pub async fn recv(&self) -> Result<T, RecvError> {
-        struct RecvFuture<'a, T>(&'a Receiver<T>);
+        struct RecvFuture<'a, T>(&'a UnboundedReceiver<T>);
 
         impl<'a, T> Future for RecvFuture<'a, T> {
             type Output = Result<T, RecvError>;
@@ -88,18 +89,25 @@ impl<T> Receiver<T> {
         unsafe { blocking::block_on(self.recv()) }
     }
 
+    pub fn recv_blocking_timeout(&self, timeout: Duration) -> Result<T, RecvTimeoutError> {
+        match unsafe { blocking::block_on_timeout(self.recv(), timeout) } {
+            Some(value) => value.map_err(RecvError::into),
+            None => Err(RecvTimeoutError::Timeout),
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         unsafe { self.0.queue.is_empty() }
     }
 }
 
-impl<T> Clone for Sender<T> {
+impl<T> Clone for UnboundedSender<T> {
     fn clone(&self) -> Self {
-        Sender(self.0.clone())
+        UnboundedSender(self.0.clone())
     }
 }
 
-impl<T> Drop for Sender<T> {
+impl<T> Drop for UnboundedSender<T> {
     fn drop(&mut self) {
         unsafe {
             self.0.drop(|| {
@@ -109,7 +117,7 @@ impl<T> Drop for Sender<T> {
     }
 }
 
-impl<T> Drop for Receiver<T> {
+impl<T> Drop for UnboundedReceiver<T> {
     fn drop(&mut self) {
         unsafe { self.0.drop(|| {}) }
     }
