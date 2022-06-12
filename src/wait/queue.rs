@@ -105,7 +105,7 @@ impl Queue {
 
         unsafe {
             node.data.waker.set(Some(waker.clone()));
-            node.data.state.store(WAITING, Ordering::Release);
+            node.data.state.store(WAITING, Ordering::Relaxed);
             list.add_front(node);
         }
 
@@ -165,7 +165,7 @@ impl Queue {
                 let waker = unsafe {
                     let waiter = list.pop().unwrap();
                     waiter.data.state.swap(WOKE, Ordering::Release);
-                    waiter.data.waker.take().unwrap()
+                    waiter.data.waker.take()
                 };
 
                 if list.is_empty() {
@@ -174,7 +174,9 @@ impl Queue {
 
                 drop(list);
 
-                waker.wake();
+                if let Some(waker) = waker {
+                    waker.wake()
+                }
             }
             _ => {}
         }
