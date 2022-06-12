@@ -1,9 +1,4 @@
-use std::{
-    marker::PhantomPinned,
-    ops::{Deref, DerefMut},
-    pin::Pin,
-    ptr::NonNull,
-};
+use std::{marker::PhantomPinned, pin::Pin, ptr::NonNull};
 
 pub struct LinkedList<T> {
     head: Option<NonNull<Node<T>>>,
@@ -55,7 +50,7 @@ impl<T> LinkedList<T> {
     }
 
     pub fn is_empty(&self) -> bool {
-        if !self.head.is_none() {
+        if self.head.is_some() {
             return false;
         }
 

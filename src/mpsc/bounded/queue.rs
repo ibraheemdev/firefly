@@ -43,11 +43,13 @@ impl<T> Queue<T> {
         let pos = self.tail.fetch_inc();
         let index = pos & (self.slots.len() - 1);
 
-        Ok(unsafe {
+        unsafe {
             let slot = self.slots.get_unchecked(index);
             slot.value.get().write(MaybeUninit::new(value));
             slot.stored.store(true, Ordering::Release);
-        })
+        }
+
+        Ok(())
     }
 
     pub unsafe fn is_empty(&self) -> bool {

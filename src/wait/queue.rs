@@ -1,8 +1,7 @@
-use super::Status;
 use crate::util::intrusive_list::{LinkedList, Node};
 use crate::util::UnsafeDeref;
 
-use std::cell::{Cell, UnsafeCell};
+use std::cell::Cell;
 use std::future::Future;
 use std::hint;
 use std::marker::PhantomData;
@@ -108,7 +107,7 @@ impl WaitQueue {
             return Poll::Ready(());
         }
 
-        let mut list = self.list.lock();
+        let _list = self.list.lock();
 
         if node.data.state.load(Ordering::Acquire) == WOKE {
             return Poll::Ready(());
@@ -158,7 +157,7 @@ impl WaitQueue {
         }
 
         let mut list = self.list.lock();
-        let mut state = self.state.load(Ordering::Acquire);
+        state = self.state.load(Ordering::Acquire);
 
         match state {
             EMPTY | WOKE => {
@@ -171,7 +170,7 @@ impl WaitQueue {
                 }
             }
             WAITING => {
-                let waker = unsafe {
+                let waker = {
                     let waiter = list.pop().unwrap();
                     waiter.data.state.swap(WOKE, Ordering::Release);
                     waiter.data.waker.take()
@@ -220,7 +219,7 @@ pin_project_lite::pin_project! {
         fn drop(mut this: Pin<&mut Self>) {
             let this = this.project();
             if *this.state == State::Registered {
-                unsafe { this.queue.remove(this.waiter) }
+                 this.queue.remove(this.waiter)
             }
         }
     }
@@ -252,13 +251,8 @@ where
                     }
 
                     match this.queue.register(this.waiter, cx.waker()) {
-                        Status::Registered => {
-                            *this.state = State::Registered;
-                        }
-                        Status::Awoke => {
-                            hint::spin_loop();
-                            continue;
-                        }
+                        Status::Registered => *this.state = State::Registered,
+                        Status::Awoke => hint::spin_loop(),
                     }
                 }
                 State::Registered => {
@@ -271,16 +265,16 @@ where
                 State::Done => match (this.poll_fn)() {
                     Poll::Ready(value) => return Poll::Ready(value),
                     Poll::Pending => match this.queue.register(this.waiter, cx.waker()) {
-                        Status::Registered => {
-                            *this.state = State::Registered;
-                        }
-                        Status::Awoke => {
-                            hint::spin_loop();
-                            continue;
-                        }
+                        Status::Registered => *this.state = State::Registered,
+                        Status::Awoke => hint::spin_loop(),
                     },
                 },
             }
         }
     }
+}
+
+pub enum Status {
+    Registered,
+    Awoke,
 }

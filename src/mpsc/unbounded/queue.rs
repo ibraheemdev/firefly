@@ -20,11 +20,10 @@ unsafe impl<T> Sync for Queue<T> {}
 impl<T> Queue<T> {
     pub fn new() -> Queue<T> {
         let block = Block::alloc();
-        let with_zero_index = (block as usize) | (Block::INDEX_MASK & 0);
 
         Queue {
             head: CachePadded(Cell::new((block, 0))),
-            tail: CachePadded(AtomicPtr::new(with_zero_index as _)),
+            tail: CachePadded(AtomicPtr::new(block)),
             cached_tail: AtomicPtr::new(block),
         }
     }
@@ -38,41 +37,39 @@ impl<T> Queue<T> {
             let (head, index) = self.head.get();
 
             if index < Block::SLOTS {
-                unsafe {
-                    let slot = head.deref().slots.get_unchecked(index);
+                let slot = head.deref().slots.get_unchecked(index);
 
-                    for _ in 0..SPIN_READ {
-                        if slot.state.load(Ordering::Acquire) & WRITTEN == WRITTEN {
-                            let value = slot.value.get().read().assume_init();
-                            let state = slot.state.fetch_add(CONSUMED, Ordering::Release);
-                            assert_eq!(state, WRITTEN);
-                            self.head.set((head, index + 1));
-                            return Some(value);
-                        }
-
-                        std::hint::spin_loop();
+                for _ in 0..SPIN_READ {
+                    if slot.state.load(Ordering::Acquire) & WRITTEN == WRITTEN {
+                        let value = slot.value.get().read().assume_init();
+                        let state = slot.state.fetch_add(CONSUMED, Ordering::Release);
+                        assert_eq!(state, WRITTEN);
+                        self.head.set((head, index + 1));
+                        return Some(value);
                     }
 
-                    match slot.state.fetch_add(INVALID, Ordering::Acquire) {
-                        WRITTEN => {
-                            let value = slot.value.get().read().assume_init();
-                            slot.state.fetch_add(CONSUMED, Ordering::Release);
-                            self.head.set((head, index + 1));
-                            return Some(value);
-                        }
-                        state => {
-                            assert!(state & RESUME == 0);
-                            slot.state.fetch_add(CONSUMED, Ordering::Release);
-                            self.head.set((head, index + 1));
-                            continue;
-                        }
-                    };
+                    std::hint::spin_loop();
                 }
+
+                match slot.state.fetch_add(INVALID, Ordering::Acquire) {
+                    WRITTEN => {
+                        let value = slot.value.get().read().assume_init();
+                        slot.state.fetch_add(CONSUMED, Ordering::Release);
+                        self.head.set((head, index + 1));
+                        return Some(value);
+                    }
+                    state => {
+                        assert!(state & RESUME == 0);
+                        slot.state.fetch_add(CONSUMED, Ordering::Release);
+                        self.head.set((head, index + 1));
+                        continue;
+                    }
+                };
             }
 
             if index == Block::SLOTS {
                 self.head.set((head, index + 1));
-                unsafe { Block::try_reclaim(head, 0) };
+                Block::try_reclaim(head, 0);
             }
 
             let tail = self
@@ -84,18 +81,16 @@ impl<T> Queue<T> {
                 return None;
             }
 
-            unsafe {
-                let next = head.deref().next.load(Ordering::Acquire);
-                self.head.set((next, 0));
+            let next = head.deref().next.load(Ordering::Acquire);
+            self.head.set((next, 0));
 
-                let state = head
-                    .deref()
-                    .reclamation
-                    .fetch_add(Block::HEAD_ADVANCED, Ordering::AcqRel);
+            let state = head
+                .deref()
+                .reclamation
+                .fetch_add(Block::HEAD_ADVANCED, Ordering::AcqRel);
 
-                if state == Block::CONSUMED | Block::TAIL_ADVANCED {
-                    let _ = Block::dealloc(head);
-                }
+            if state == Block::CONSUMED | Block::TAIL_ADVANCED {
+                let _ = Block::dealloc(head);
             }
         }
     }
@@ -269,7 +264,9 @@ impl Block<()> {
 
 impl<T> Block<T> {
     fn alloc() -> *mut Block<T> {
-        unsafe { Box::into_raw(util::box_zeroed()) }
+        let block = unsafe { Box::into_raw(util::box_zeroed()) };
+        assert_eq!(block as usize & Block::INDEX_MASK, 0);
+        block
     }
 
     unsafe fn dealloc(block: *mut Block<T>) {

@@ -1,10 +1,8 @@
-use super::Status;
-use crate::util::{CachePadded, UnsafeDeref};
+use crate::util::UnsafeDeref;
 
 use std::cell::UnsafeCell;
 use std::sync::atomic::fence;
 use std::sync::atomic::AtomicU8;
-use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::task::Poll;
 use std::task::Waker;

@@ -8,11 +8,11 @@ pub unsafe fn block_on<F>(mut future: F) -> F::Output
 where
     F: Future,
 {
-    PARKER.with(|parker| {
-        let mut future = unsafe { Pin::new_unchecked(&mut future) };
+    let mut future = Pin::new_unchecked(&mut future);
 
+    PARKER.with(|parker| {
         let data = parker as *const Parker as *const ();
-        let waker = unsafe { Waker::from_raw(RawWaker::new(data, &VTABLE)) };
+        let waker = Waker::from_raw(RawWaker::new(data, &VTABLE));
         let mut cx = Context::from_waker(&waker);
 
         loop {

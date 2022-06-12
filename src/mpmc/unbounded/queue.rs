@@ -1,6 +1,6 @@
 use crate::util::{self, CachePadded, FetchAddPtr, StrictProvenance, UnsafeDeref};
 
-use std::cell::{Cell, UnsafeCell};
+use std::cell::UnsafeCell;
 use std::mem::{ManuallyDrop, MaybeUninit};
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicU8, Ordering};
@@ -22,16 +22,15 @@ unsafe impl<T> Sync for Queue<T> {}
 impl<T> Queue<T> {
     pub fn new() -> Queue<T> {
         let block = Block::alloc();
-        let with_zero_index = (block as usize) | (Block::INDEX_MASK & 0);
 
         Queue {
-            head: CachePadded(AtomicPtr::new(with_zero_index as _)),
-            tail: CachePadded(AtomicPtr::new(with_zero_index as _)),
+            head: CachePadded(AtomicPtr::new(block)),
+            tail: CachePadded(AtomicPtr::new(block)),
             cached_tail: AtomicPtr::new(block),
         }
     }
 
-    pub unsafe fn pop(&self) -> Option<T> {
+    pub fn pop(&self) -> Option<T> {
         loop {
             if self.is_empty() {
                 return None;
@@ -51,7 +50,7 @@ impl<T> Queue<T> {
                             match slot.state.fetch_add(CONSUMED, Ordering::Release) {
                                 WRITTEN => return Some(value),
                                 READER_RESUME => {
-                                    unsafe { Block::try_reclaim(head, index + 1) };
+                                    Block::try_reclaim(head, index + 1);
                                     return Some(value);
                                 }
                                 _ => unreachable!(),
@@ -68,7 +67,7 @@ impl<T> Queue<T> {
                             if slot.state.fetch_add(CONSUMED, Ordering::Release)
                                 == INVALID | READER_RESUME
                             {
-                                unsafe { Block::try_reclaim(head, index + 1) };
+                                Block::try_reclaim(head, index + 1);
                             }
 
                             return Some(value);
@@ -76,14 +75,14 @@ impl<T> Queue<T> {
                         READER_RESUME => {
                             let value = slot.value.get().read().assume_init();
                             slot.state.fetch_add(CONSUMED, Ordering::Release);
-                            unsafe { Block::try_reclaim(head, index + 1) };
+                            Block::try_reclaim(head, index + 1);
                             return Some(value);
                         }
                         _ => {
                             if slot.state.fetch_add(CONSUMED, Ordering::Release)
                                 == INVALID | READER_RESUME
                             {
-                                unsafe { Block::try_reclaim(head, index + 1) };
+                                Block::try_reclaim(head, index + 1);
                             }
 
                             continue;
@@ -102,17 +101,15 @@ impl<T> Queue<T> {
                 .map_addr(|addr| addr & !Block::INDEX_MASK);
 
             if head == tail {
-                Block::try_reclaim_head_slow(head, None);
+                unsafe { Block::try_reclaim_head_slow(head, None) };
                 return None;
             }
 
             unsafe {
                 let next = head.deref().next.load(Ordering::Acquire);
-                let next_tagged = (next as usize) | Block::INDEX_MASK & 0;
 
                 let current = (current as usize).wrapping_add(1) as *mut _;
-                let final_count =
-                    Block::compare_exchange(&self.head, current, next_tagged as _, head);
+                let final_count = Block::compare_exchange(&self.head, current, next, head);
 
                 Block::try_reclaim_head_slow(head, final_count);
                 continue;
@@ -120,7 +117,7 @@ impl<T> Queue<T> {
         }
     }
 
-    pub unsafe fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         let cached_tail = self.cached_tail.load(Ordering::Acquire);
 
         let head = self.head.fetch_add(0, Ordering::Relaxed);
@@ -296,7 +293,9 @@ impl Block<()> {
 
 impl<T> Block<T> {
     fn alloc() -> *mut Block<T> {
-        unsafe { Box::into_raw(util::box_zeroed()) }
+        let block = unsafe { Box::into_raw(util::box_zeroed()) };
+        assert_eq!(block as usize & Block::INDEX_MASK, 0);
+        block
     }
 
     unsafe fn dealloc(block: *mut Block<T>) {

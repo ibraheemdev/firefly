@@ -1,4 +1,4 @@
-#![allow(dead_code, unused, unstable_name_collisions)]
+#![allow(unstable_name_collisions, clippy::collapsible_if)]
 
 pub mod mpmc;
 pub mod mpsc;

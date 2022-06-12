@@ -7,7 +7,6 @@ use crate::{blocking, rc};
 use std::future::Future;
 use std::hint;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::task::{Context, Poll};
 
 pub(super) fn new<T>() -> (Sender<T>, Receiver<T>) {
@@ -62,12 +61,12 @@ impl<T> Receiver<T> {
         impl<'a, T> Future for RecvFuture<'a, T> {
             type Output = Result<T, RecvError>;
 
-            fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+            fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
                 self.0.poll_recv(cx)
             }
         }
 
-        RecvFuture(&self).await
+        RecvFuture(self).await
     }
 
     pub fn poll_recv(&self, cx: &mut Context<'_>) -> Poll<Result<T, RecvError>> {

@@ -34,20 +34,20 @@ impl<T, const MAX: usize> Sender<T, MAX> {
         let count = unsafe { self.rc.deref().senders.fetch_add(1, Ordering::Relaxed) };
 
         if count > MAX {
-            std::process::abort();
+            panic!("exceeded max sender count of {}", MAX);
         }
 
         Sender { rc: self.rc }
     }
 
-    pub unsafe fn drop<F>(&self, wake: F)
+    pub unsafe fn drop<F>(&self, disconnect: F)
     where
         F: FnOnce(),
     {
         if self.rc.deref().senders.fetch_sub(1, Ordering::AcqRel) == 1 {
             let disconnected = self.rc.deref().disconnected.swap(true, Ordering::AcqRel);
 
-            wake();
+            disconnect();
 
             if disconnected {
                 let _ = Box::from_raw(self.rc);
@@ -77,20 +77,20 @@ impl<T, const MAX: usize> Receiver<T, MAX> {
         let count = unsafe { self.rc.deref().receivers.fetch_add(1, Ordering::Relaxed) };
 
         if count > MAX {
-            std::process::abort();
+            panic!("exceeded max receiver count of {}", MAX);
         }
 
         Receiver { rc: self.rc }
     }
 
-    pub unsafe fn drop<F>(&self, wake: F)
+    pub unsafe fn drop<F>(&self, disconnect: F)
     where
         F: FnOnce(),
     {
         if self.rc.deref().receivers.fetch_sub(1, Ordering::AcqRel) == 1 {
             let disconnected = self.rc.deref().disconnected.swap(true, Ordering::AcqRel);
 
-            wake();
+            disconnect();
 
             if disconnected {
                 let _ = Box::from_raw(self.rc);

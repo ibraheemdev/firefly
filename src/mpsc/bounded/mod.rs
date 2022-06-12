@@ -7,7 +7,6 @@ use crate::{blocking, rc};
 use std::future::Future;
 use std::hint;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::task::{Context, Poll};
 
 pub(super) fn new<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
@@ -52,10 +51,8 @@ impl<T> Sender<T> {
             .poll_fn(|| {
                 let value = state.take().unwrap();
                 match self.try_send(value) {
-                    Ok(()) => return Poll::Ready(Ok(())),
-                    Err(TrySendError::Disconnected(value)) => {
-                        return Poll::Ready(Err(SendError(value)))
-                    }
+                    Ok(()) => Poll::Ready(Ok(())),
+                    Err(TrySendError::Disconnected(value)) => Poll::Ready(Err(SendError(value))),
                     Err(TrySendError::Full(value)) => {
                         state = Some(value);
                         Poll::Pending
@@ -93,12 +90,12 @@ impl<T> Receiver<T> {
         impl<'a, T> Future for RecvFuture<'a, T> {
             type Output = Result<T, RecvError>;
 
-            fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+            fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
                 self.0.poll_recv(cx)
             }
         }
 
-        RecvFuture(&self).await
+        RecvFuture(self).await
     }
 
     pub fn poll_recv(&self, cx: &mut Context<'_>) -> Poll<Result<T, RecvError>> {
@@ -133,20 +130,12 @@ impl<T> Clone for Sender<T> {
 
 impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
-        unsafe {
-            self.0.drop(|| {
-                self.0.receiver.wake();
-            })
-        }
+        unsafe { self.0.drop(|| self.0.receiver.wake()) }
     }
 }
 
 impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
-        unsafe {
-            self.0.drop(|| {
-                self.0.senders.wake_all();
-            })
-        }
+        unsafe { self.0.drop(|| self.0.senders.wake_all()) }
     }
 }

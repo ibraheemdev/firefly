@@ -1,9 +1,9 @@
-use crate::util::{CachePadded, UnsafeDeref};
+use crate::util::CachePadded;
 
 use std::cell::UnsafeCell;
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
-use std::{hint, iter, ptr};
+use std::{hint, iter};
 
 pub struct Queue<T> {
     free: IndexQueue,
@@ -63,20 +63,8 @@ impl<T> Queue<T> {
         }
     }
 
-    pub fn len(&self) -> usize {
-        self.elements.len(self.order)
-    }
-
     pub fn is_empty(&self) -> bool {
-        self.elements.len(self.order) == 0
-    }
-
-    pub fn is_full(&self) -> bool {
-        self.free.len(self.order) == 0
-    }
-
-    pub fn capacity(&self) -> usize {
-        1 << self.order
+        self.elements.is_empty()
     }
 }
 
@@ -248,7 +236,7 @@ impl IndexQueue {
                             if spun < SPIN_LIMIT {
                                 spun += 1;
 
-                                for _ in (0..(spun.pow(2))) {
+                                for _ in 0..(spun.pow(2)) {
                                     hint::spin_loop()
                                 }
 
@@ -319,29 +307,10 @@ impl IndexQueue {
         }
     }
 
-    pub fn len(&self, order: usize) -> usize {
-        let capacity = 1 << order;
-
-        loop {
-            let tail = self.tail.load(Ordering::Acquire);
-            let head = self.head.load(Ordering::Acquire);
-
-            // make sure we have consistent values to work with
-            if self.tail.load(Ordering::Acquire) == tail {
-                let head_index = head & (capacity - 1);
-                let tail_index = tail & (capacity - 1);
-
-                break if head_index < tail_index {
-                    tail_index - head_index
-                } else if head_index > tail_index {
-                    capacity - (head_index - tail_index)
-                } else if tail == head {
-                    0
-                } else {
-                    capacity
-                };
-            }
-        }
+    pub fn is_empty(&self) -> bool {
+        let tail = self.tail.load(Ordering::Acquire);
+        let head = self.head.load(Ordering::Acquire);
+        head == tail
     }
 
     #[inline(always)]

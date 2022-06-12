@@ -1,9 +1,7 @@
 pub mod intrusive_list;
 
 use std::alloc::{self, Layout};
-use std::ptr;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
-use std::task::{RawWaker, RawWakerVTable, Waker};
 
 #[cfg_attr(
     any(
