@@ -337,7 +337,7 @@ impl<T> Block<T> {
             current_tagged = found;
         }
 
-        Some((current_tagged.addr() & Block::INDEX_MASK) as _)
+        Some(((current_tagged.addr() & Block::INDEX_MASK) - Block::SLOTS) as _)
     }
 }
 
