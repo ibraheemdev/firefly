@@ -1,7 +1,10 @@
 pub mod intrusive_list;
 
 use std::alloc::{self, Layout};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use std::task::{Context, Poll};
 
 #[cfg_attr(
     any(
@@ -108,4 +111,26 @@ unsafe impl<T> StrictProvenance for *mut T {
     fn map_addr(self, f: impl FnOnce(usize) -> usize) -> Self {
         self.with_addr(f(self.addr()))
     }
+}
+
+pub async fn poll_fn<T, F>(f: F) -> T
+where
+    F: FnMut(&mut Context<'_>) -> Poll<T>,
+{
+    struct PollFn<F>(F);
+
+    impl<F> Unpin for PollFn<F> {}
+
+    impl<T, F> Future for PollFn<F>
+    where
+        F: FnMut(&mut Context<'_>) -> Poll<T>,
+    {
+        type Output = T;
+
+        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<T> {
+            (self.0)(cx)
+        }
+    }
+
+    PollFn(f).await
 }

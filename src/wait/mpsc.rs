@@ -1,9 +1,12 @@
+use super::will_wake;
 use crate::util::UnsafeDeref;
 
 use std::cell::UnsafeCell;
+use std::hint;
 use std::sync::atomic::fence;
 use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
+use std::task::Context;
 use std::task::Poll;
 use std::task::Waker;
 
@@ -28,17 +31,29 @@ impl WaitCell {
         }
     }
 
-    pub unsafe fn poll(&self, waker: &Waker) -> Poll<()> {
+    #[inline]
+    pub fn poll_with<T, F>(&self, cx: &mut Context<'_>, mut poll: F) -> Poll<T>
+    where
+        F: FnMut() -> Poll<T>,
+    {
+        loop {
+            match (poll)() {
+                Poll::Ready(value) => return Poll::Ready(value),
+                Poll::Pending => {}
+            }
+
+            match unsafe { self.poll(cx.waker()) } {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(_) => hint::spin_loop(),
+            }
+        }
+    }
+
+    unsafe fn poll(&self, waker: &Waker) -> Poll<()> {
         let mut state = self.state.load(Ordering::Relaxed);
 
         if state == WAITING {
-            let will_wake = self
-                .waker
-                .get()
-                .deref()
-                .as_ref()
-                .map(|w| w.will_wake(waker))
-                .unwrap_or(false);
+            let will_wake = will_wake(self.waker.get().deref(), waker);
 
             if !will_wake {
                 match self.state.compare_exchange(

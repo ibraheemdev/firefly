@@ -1,5 +1,9 @@
-mod cell;
-mod queue;
+pub mod mpmc;
+pub mod mpsc;
+pub mod spsc;
 
-pub use cell::WaitCell;
-pub use queue::WaitQueue;
+use std::task::Waker;
+
+fn will_wake(curr: &Option<Waker>, new: &Waker) -> bool {
+    curr.as_ref().map(|w| w.will_wake(new)).unwrap_or(false)
+}

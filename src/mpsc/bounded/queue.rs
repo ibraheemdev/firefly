@@ -53,9 +53,7 @@ impl<T> Queue<T> {
     }
 
     pub unsafe fn is_empty(&self) -> bool {
-        let head = self.head.get();
-        let tail = self.tail.load();
-        head == tail
+        self.head.get() == self.tail.load()
     }
 
     pub unsafe fn pop(&self) -> Option<T> {

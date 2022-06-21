@@ -1,22 +1,18 @@
 mod queue;
 
 use crate::error::*;
-use crate::wait::WaitCell;
-use crate::{blocking, rc};
+use crate::wait::mpsc::WaitCell;
+use crate::{blocking, rc, util};
 
-use std::future::Future;
-use std::hint;
-use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
 pub(super) fn new<T>() -> (UnboundedSender<T>, UnboundedReceiver<T>) {
-    let channel = Channel {
+    let (tx, rx) = rc::alloc(Channel {
         queue: queue::Queue::new(),
         receiver: WaitCell::new(),
-    };
+    });
 
-    let (tx, rx) = rc::alloc(channel);
     (UnboundedSender(tx), UnboundedReceiver(rx))
 }
 
@@ -45,7 +41,6 @@ impl<T> UnboundedSender<T> {
 pub struct UnboundedReceiver<T>(rc::Receiver<Channel<T>, 1>);
 
 unsafe impl<T: Send> Send for UnboundedReceiver<T> {}
-// impl<T> !Sync for Receiver<T> {}
 
 impl<T> UnboundedReceiver<T> {
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
@@ -57,32 +52,15 @@ impl<T> UnboundedReceiver<T> {
     }
 
     pub async fn recv(&self) -> Result<T, RecvError> {
-        struct RecvFuture<'a, T>(&'a UnboundedReceiver<T>);
-
-        impl<'a, T> Future for RecvFuture<'a, T> {
-            type Output = Result<T, RecvError>;
-
-            fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-                self.0.poll_recv(cx)
-            }
-        }
-
-        RecvFuture(self).await
+        util::poll_fn(|cx| self.poll_recv(cx)).await
     }
 
     pub fn poll_recv(&self, cx: &mut Context<'_>) -> Poll<Result<T, RecvError>> {
-        loop {
-            match unsafe { self.0.queue.pop() } {
-                Some(value) => return Poll::Ready(Ok(value)),
-                _ if self.0.is_disconnected() => return Poll::Ready(Err(RecvError)),
-                _ => {}
-            }
-
-            match unsafe { self.0.receiver.poll(cx.waker()) } {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(_) => hint::spin_loop(),
-            }
-        }
+        self.0.receiver.poll_with(cx, || match self.try_recv() {
+            Ok(value) => return Poll::Ready(Ok(value)),
+            Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
+            Err(TryRecvError::Empty) => Poll::Pending,
+        })
     }
 
     pub fn recv_blocking(&self) -> Result<T, RecvError> {
@@ -109,11 +87,7 @@ impl<T> Clone for UnboundedSender<T> {
 
 impl<T> Drop for UnboundedSender<T> {
     fn drop(&mut self) {
-        unsafe {
-            self.0.drop(|| {
-                self.0.receiver.wake();
-            })
-        }
+        unsafe { self.0.drop(|| self.0.receiver.wake()) }
     }
 }
 

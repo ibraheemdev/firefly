@@ -1,20 +1,19 @@
 mod queue;
 
 use crate::error::*;
-use crate::wait::WaitQueue;
+use crate::wait::mpmc::WaitQueue;
 use crate::{blocking, rc};
 
 use std::task::Poll;
 use std::time::Duration;
 
 pub(super) fn new<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
-    let channel = Channel {
+    let (tx, rx) = rc::alloc(Channel {
         queue: queue::Queue::new(capacity),
         receivers: WaitQueue::new(),
         senders: WaitQueue::new(),
-    };
+    });
 
-    let (tx, rx) = rc::alloc(channel);
     (Sender(tx), Receiver(rx))
 }
 

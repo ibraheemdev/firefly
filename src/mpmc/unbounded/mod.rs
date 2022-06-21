@@ -1,19 +1,18 @@
 mod queue;
 
 use crate::error::*;
-use crate::wait::WaitQueue;
+use crate::wait::mpmc::WaitQueue;
 use crate::{blocking, rc};
 
 use std::task::Poll;
 use std::time::Duration;
 
 pub(super) fn new<T>() -> (UnboundedSender<T>, UnboundedReceiver<T>) {
-    let channel = Channel {
+    let (tx, rx) = rc::alloc(Channel {
         queue: queue::Queue::new(),
         receivers: WaitQueue::new(),
-    };
+    });
 
-    let (tx, rx) = rc::alloc(channel);
     (UnboundedSender(tx), UnboundedReceiver(rx))
 }
 

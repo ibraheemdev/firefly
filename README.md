@@ -27,7 +27,7 @@ Firefly provides a variety of channel flavors, optimized for specific use cases:
 In general a channel flavor higher up on the list is likely to be more performant
 than a more generic one lower down.
 
-## Bounded Channels
+---
 
 Bounded channels are created with a bounded capacity; the maximum number of messages
 that can be held at a given time:
@@ -49,8 +49,6 @@ for _ in 0..100 {
     println!("{i}");
 }
 ```
-
-## Unbounded Channels
 
 Unbounded channels on the other hand are unlimited in their capacity, meaning that
 sending never blocks:

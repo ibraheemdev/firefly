@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 pin-project-lite = "0.2.9"
+static_assertions = "1.1.0"
 usync = "0.2.1"
 
 [dev-dependencies]
