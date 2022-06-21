@@ -65,7 +65,7 @@ fn bench_all(c: &mut Criterion) {
 fn bench<M, S, R>(name: &'static str, g: &mut BenchmarkGroup<'_, M>, chan: impl Fn(usize) -> (S, R))
 where
     M: Measurement,
-    S: Sender<usize>,
+    S: Sender<usize> + Send + Clone,
     R: Receiver<usize>,
 {
     let threads = (std::thread::available_parallelism().unwrap().get() - 2).max(1);

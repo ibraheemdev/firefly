@@ -17,3 +17,7 @@ thingbuf = "0.1.3"
 [[bench]]
 name = "mpsc"
 harness = false
+
+[[bench]]
+name = "spsc"
+harness = false

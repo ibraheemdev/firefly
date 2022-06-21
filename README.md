@@ -19,6 +19,8 @@ assert_eq!(rx.recv_blocking().unwrap(), 42);
 
 Firefly provides a variety of channel flavors, optimized for specific use cases:
 
+- [`spsc::bounded`]
+- [`spsc::unbounded`]
 - [`mpsc::bounded`]
 - [`mpsc::unbounded`]
 - [`mpmc::bounded`]

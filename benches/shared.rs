@@ -1,4 +1,4 @@
-pub trait Sender<T>: Clone + Send {
+pub trait Sender<T>: Send {
     fn send(&self, value: T) -> Result<(), ()>;
 }
 
@@ -37,6 +37,14 @@ impl_chan! { std::sync::mpsc::SyncSender<T> }
 impl_chan! { std::sync::mpsc::Sender<T>, std::sync::mpsc::Receiver<T> }
 impl_chan! { crossbeam::channel::Sender<T>, crossbeam::channel::Receiver<T> }
 impl_chan! { flume::Sender<T>, flume::Receiver<T> }
+impl_chan! {
+    firefly::spsc::UnboundedSender<T> |c, val| { c.send(val).map_err(drop) };
+    firefly::spsc::UnboundedReceiver<T> |c| { c.recv_blocking().map_err(drop) };
+}
+impl_chan! {
+    firefly::spsc::Sender<T> |c, val| { c.send_blocking(val).map_err(drop) };
+    firefly::spsc::Receiver<T> |c| { c.recv_blocking().map_err(|e| panic!("{}", e)) };
+}
 impl_chan! {
     firefly::mpsc::UnboundedSender<T> |c, val| { c.send(val).map_err(drop) };
     firefly::mpsc::UnboundedReceiver<T> |c| { c.recv_blocking().map_err(drop) };
