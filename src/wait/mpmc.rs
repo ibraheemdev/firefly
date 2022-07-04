@@ -245,13 +245,18 @@ where
 
             match this.state {
                 State::Started => {
-                    match (this.poll_fn)() {
-                        Poll::Ready(value) => return Poll::Ready(value),
-                        Poll::Pending => {}
+                    if let Poll::Ready(value) = (this.poll_fn)() {
+                        return Poll::Ready(value);
                     }
 
                     match this.queue.register(this.waiter, cx.waker()) {
-                        Status::Registered => *this.state = State::Registered,
+                        Status::Registered => {
+                            *this.state = State::Registered;
+
+                            if let Poll::Ready(value) = (this.poll_fn)() {
+                                return Poll::Ready(value);
+                            }
+                        }
                         Status::Awoke => hint::spin_loop(),
                     }
                 }
@@ -262,13 +267,22 @@ where
 
                     *this.state = State::Done;
                 }
-                State::Done => match (this.poll_fn)() {
-                    Poll::Ready(value) => return Poll::Ready(value),
-                    Poll::Pending => match this.queue.register(this.waiter, cx.waker()) {
-                        Status::Registered => *this.state = State::Registered,
+                State::Done => {
+                    if let Poll::Ready(value) = (this.poll_fn)() {
+                        return Poll::Ready(value);
+                    }
+
+                    match this.queue.register(this.waiter, cx.waker()) {
+                        Status::Registered => {
+                            *this.state = State::Registered;
+
+                            if let Poll::Ready(value) = (this.poll_fn)() {
+                                return Poll::Ready(value);
+                            }
+                        }
                         Status::Awoke => hint::spin_loop(),
-                    },
-                },
+                    }
+                }
             }
         }
     }
