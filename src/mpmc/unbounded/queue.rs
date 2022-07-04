@@ -16,8 +16,7 @@ pub struct Queue<T> {
     cached_tail: AtomicPtr<Block<T>>,
 }
 
-unsafe impl<T> Send for Queue<T> {}
-unsafe impl<T> Sync for Queue<T> {}
+unsafe impl<T: Send> Send for Queue<T> {}
 
 impl<T> Queue<T> {
     pub fn new() -> Queue<T> {

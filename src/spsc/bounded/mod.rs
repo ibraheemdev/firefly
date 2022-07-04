@@ -75,21 +75,20 @@ impl<T> Sender<T> {
     }
 
     pub async fn send_inner(&self, state: &mut Option<T>) -> Result<(), SendError<T>> {
-        util::poll_fn(|cx| {
-            self.chan.sender.poll_with(cx, || {
-                let value = state.take().unwrap();
+        let mut try_send = || {
+            let value = state.take().unwrap();
 
-                match self.try_send(value) {
-                    Ok(()) => Poll::Ready(Ok(())),
-                    Err(TrySendError::Disconnected(value)) => Poll::Ready(Err(SendError(value))),
-                    Err(TrySendError::Full(value)) => {
-                        *state = Some(value);
-                        Poll::Pending
-                    }
+            match self.try_send(value) {
+                Ok(()) => Poll::Ready(Ok(())),
+                Err(TrySendError::Disconnected(value)) => Poll::Ready(Err(SendError(value))),
+                Err(TrySendError::Full(value)) => {
+                    *state = Some(value);
+                    Poll::Pending
                 }
-            })
-        })
-        .await
+            }
+        };
+
+        util::poll_fn(|cx| self.chan.sender.poll_with(cx, || try_send())).await
     }
 }
 

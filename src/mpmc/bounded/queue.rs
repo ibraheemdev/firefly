@@ -79,7 +79,7 @@ impl<T> Drop for Queue<T> {
 // Note: if set by a user, this will round up to 1 << 32.
 const MAX_CAPACITY: usize = (1 << 31) + 1;
 
-const SPIN_LIMIT: usize = 6;
+const SPIN_READ: usize = 6;
 
 pub struct IndexQueue {
     head: CachePadded<AtomicUsize>,
@@ -233,10 +233,10 @@ impl IndexQueue {
                             // spin for a bit before invalidating
                             // the slot for writers from a previous
                             // cycle in case they arrive soon
-                            if spun < SPIN_LIMIT {
+                            if spun < SPIN_READ {
                                 spun += 1;
 
-                                for _ in 0..(spun.pow(2)) {
+                                for _ in 0..spun.pow(2) {
                                     hint::spin_loop()
                                 }
 
