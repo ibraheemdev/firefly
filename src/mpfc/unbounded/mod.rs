@@ -59,11 +59,14 @@ impl<T> UnboundedReceiver<T> {
     pub async fn recv(&self) -> Result<T, RecvError> {
         self.0
             .receivers
-            .poll_fn(|| match self.try_recv() {
-                Ok(value) => Poll::Ready(Ok(value)),
-                Err(TryRecvError::Disconnected) => Poll::Ready(Err(RecvError)),
-                Err(TryRecvError::Empty) => Poll::Pending,
-            })
+            .poll_fn(
+                || self.0.queue.is_empty(),
+                || match self.try_recv() {
+                    Ok(value) => Poll::Ready(Ok(value)),
+                    Err(TryRecvError::Disconnected) => Poll::Ready(Err(RecvError)),
+                    Err(TryRecvError::Empty) => Poll::Pending,
+                },
+            )
             .await
     }
 

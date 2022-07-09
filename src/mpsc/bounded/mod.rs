@@ -66,7 +66,7 @@ impl<T> Sender<T> {
     pub async fn send_inner(&self, state: &mut Option<T>) -> Result<(), SendError<T>> {
         self.0
             .senders
-            .poll_fnn(
+            .poll_fn(
                 || !self.0.queue.can_push(),
                 || {
                     let value = state.take().unwrap();

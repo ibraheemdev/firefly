@@ -122,13 +122,14 @@ impl WaitQueue {
             if let Poll::Ready(output) = fut.as_mut().poll(&mut cx) {
                 return output;
             }
+
             while !signal.notified.swap(false, Ordering::Acquire) {
                 thread::park();
             }
         }
     }
 
-    pub async fn poll_fnn<T>(
+    pub async fn poll_fn<T>(
         &self,
         mut should_park: impl FnMut() -> bool,
         mut try_poll: impl FnMut() -> Poll<T>,
@@ -142,10 +143,6 @@ impl WaitQueue {
                 }
             }
         }
-    }
-
-    pub async fn poll_fn<T>(&self, mut try_poll: impl FnMut() -> Poll<T>) -> T {
-        panic!("...")
     }
 
     pub async fn park(&self, should_park: impl FnOnce() -> bool) {
