@@ -24,12 +24,13 @@ fn bench_all(c: &mut Criterion) {
 
     group.finish();
 
+    const LOAD: usize = 10;
     let mut group = c.benchmark_group("spsc/bounded/contended");
     group.sample_size(20);
 
-    bench("firefly", &mut group, |x| firefly::spsc::bounded(x / 2));
+    bench("firefly", &mut group, |x| firefly::spsc::bounded(x / LOAD));
     bench("firefly-mpsc", &mut group, |x| {
-        firefly::mpsc::bounded(x / 2)
+        firefly::mpsc::bounded(x / LOAD)
     });
 
     group.finish();
