@@ -88,7 +88,7 @@ impl<T> Sender<T> {
             }
         };
 
-        util::poll_fn(|cx| self.chan.sender.poll_with(cx, || try_send())).await
+        util::poll_fn(|cx| self.chan.sender.poll_fn(cx, || try_send())).await
     }
 }
 
@@ -116,7 +116,7 @@ impl<T> Receiver<T> {
     }
 
     pub fn poll_recv(&self, cx: &mut Context<'_>) -> Poll<Result<T, RecvError>> {
-        self.chan.receiver.poll_with(cx, || match self.try_recv() {
+        self.chan.receiver.poll_fn(cx, || match self.try_recv() {
             Ok(value) => return Poll::Ready(Ok(value)),
             Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
             Err(TryRecvError::Empty) => Poll::Pending,

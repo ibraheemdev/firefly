@@ -10,6 +10,7 @@ use std::task::Context;
 use std::task::Poll;
 use std::task::Waker;
 
+#[derive(Default)]
 pub struct WaitCell {
     state: AtomicU8,
     waker: UnsafeCell<Option<Waker>>,
@@ -32,7 +33,7 @@ impl WaitCell {
     }
 
     #[inline]
-    pub fn poll_with<T, F>(&self, cx: &mut Context<'_>, mut poll: F) -> Poll<T>
+    pub fn poll_fn<T, F>(&self, cx: &mut Context<'_>, mut poll: F) -> Poll<T>
     where
         F: FnMut() -> Poll<T>,
     {
@@ -49,7 +50,7 @@ impl WaitCell {
         }
     }
 
-    unsafe fn poll(&self, waker: &Waker) -> Poll<()> {
+    pub unsafe fn poll(&self, waker: &Waker) -> Poll<()> {
         let mut state = self.state.load(Ordering::Relaxed);
 
         if state == WAITING {
@@ -101,8 +102,7 @@ impl WaitCell {
     }
 
     pub fn wake(&self) {
-        fence(Ordering::SeqCst);
-        let mut state = self.state.load(Ordering::Relaxed);
+        let mut state = self.state.load(Ordering::SeqCst);
 
         loop {
             if state & WOKE != 0 {

@@ -55,7 +55,7 @@ impl<T> UnboundedReceiver<T> {
     }
 
     pub fn poll_recv(&self, cx: &mut Context<'_>) -> Poll<Result<T, RecvError>> {
-        self.0.receiver.poll_with(cx, || match self.try_recv() {
+        self.0.receiver.poll_fn(cx, || match self.try_recv() {
             Ok(value) => return Poll::Ready(Ok(value)),
             Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
             Err(TryRecvError::Empty) => Poll::Pending,

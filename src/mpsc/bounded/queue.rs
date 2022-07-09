@@ -45,10 +45,14 @@ impl<T> Queue<T> {
         unsafe {
             let slot = self.slots.get_unchecked(index);
             slot.value.get().write(MaybeUninit::new(value));
-            slot.stored.store(true, Ordering::Release);
+            slot.stored.store(true, Ordering::SeqCst);
         }
 
         Ok(())
+    }
+
+    pub fn can_push(&self) -> bool {
+        self.sema.can_push()
     }
 
     pub unsafe fn is_empty(&self) -> bool {
@@ -84,6 +88,7 @@ impl<T> Drop for Queue<T> {
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod atomic {
+    use std::hint;
     use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 
     pub struct Semaphore(AtomicIsize);
@@ -94,19 +99,31 @@ mod atomic {
         }
 
         pub fn try_acquire(&self) -> bool {
+            let mut spin = 0;
+
             loop {
                 if self.0.fetch_sub(1, Ordering::Acquire) > 0 {
                     return true;
                 }
 
-                (0..32).for_each(|_| std::hint::spin_loop());
+                spin += 1;
+                for _ in 0..(spin * spin) {
+                    hint::spin_loop();
+                }
 
                 if self.0.fetch_add(1, Ordering::Relaxed) < 0 {
                     return false;
                 }
 
-                std::thread::yield_now();
+                spin += 1;
+                for _ in 0..(spin * spin) {
+                    hint::spin_loop();
+                }
             }
+        }
+
+        pub fn can_push(&self) -> bool {
+            self.0.load(Ordering::Relaxed) > 0
         }
 
         pub fn release(&self) {

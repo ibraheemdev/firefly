@@ -7,7 +7,7 @@ pub struct LinkedList<T> {
 
 pub struct Node<T> {
     prev: Option<NonNull<Node<T>>>,
-    next: Option<NonNull<Node<T>>>,
+    pub next: Option<NonNull<Node<T>>>,
     pub data: T,
     // https://github.com/rust-lang/rust/pull/82834
     _pin: PhantomPinned,

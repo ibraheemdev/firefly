@@ -66,17 +66,22 @@ impl<T> Sender<T> {
     pub async fn send_inner(&self, state: &mut Option<T>) -> Result<(), SendError<T>> {
         self.0
             .senders
-            .poll_fn(|| {
-                let value = state.take().unwrap();
-                match self.try_send(value) {
-                    Ok(()) => Poll::Ready(Ok(())),
-                    Err(TrySendError::Disconnected(value)) => Poll::Ready(Err(SendError(value))),
-                    Err(TrySendError::Full(value)) => {
-                        *state = Some(value);
-                        Poll::Pending
+            .poll_fnn(
+                || !self.0.queue.can_push(),
+                || {
+                    let value = state.take().unwrap();
+                    match self.try_send(value) {
+                        Ok(()) => Poll::Ready(Ok(())),
+                        Err(TrySendError::Disconnected(value)) => {
+                            Poll::Ready(Err(SendError(value)))
+                        }
+                        Err(TrySendError::Full(value)) => {
+                            *state = Some(value);
+                            Poll::Pending
+                        }
                     }
-                }
-            })
+                },
+            )
             .await
     }
 }
@@ -102,7 +107,7 @@ impl<T> Receiver<T> {
     }
 
     pub fn poll_recv(&self, cx: &mut Context<'_>) -> Poll<Result<T, RecvError>> {
-        self.0.receiver.poll_with(cx, || match self.try_recv() {
+        self.0.receiver.poll_fn(cx, || match self.try_recv() {
             Ok(value) => return Poll::Ready(Ok(value)),
             Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
             Err(TryRecvError::Empty) => Poll::Pending,

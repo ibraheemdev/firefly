@@ -66,6 +66,10 @@ impl<T> Queue<T> {
     pub fn is_empty(&self) -> bool {
         self.elements.is_empty()
     }
+
+    pub fn is_full(&self) -> bool {
+        self.free.is_empty()
+    }
 }
 
 impl<T> Drop for Queue<T> {
@@ -167,7 +171,7 @@ impl IndexQueue {
                             self.slots.get_unchecked(tail_index).compare_exchange_weak(
                                 slot,
                                 new_slot,
-                                Ordering::AcqRel,
+                                Ordering::SeqCst,
                                 Ordering::Acquire,
                             )
                         {

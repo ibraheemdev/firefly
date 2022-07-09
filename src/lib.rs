@@ -1,7 +1,7 @@
 #![doc = include_str!("../README.md")]
-#![allow(unstable_name_collisions, clippy::collapsible_if)]
+#![allow(unstable_name_collisions, clippy::collapsible_if, dead_code, unused)]
 
-pub mod mpmc;
+pub mod mpfc;
 pub mod mpsc;
 pub mod spsc;
 

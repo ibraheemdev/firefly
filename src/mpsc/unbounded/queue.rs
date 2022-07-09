@@ -138,7 +138,7 @@ impl<T> Queue<T> {
                         .as_mut_ptr()
                         .copy_from_nonoverlapping(&*value, 1);
 
-                    match slot.state.fetch_add(WRITTEN, Ordering::Release) {
+                    match slot.state.fetch_add(WRITTEN, Ordering::SeqCst) {
                         UNINIT | RESUME => return,
                         WRITER_RESUME => Block::try_reclaim(tail, index + 1),
                         _ => {}
@@ -168,7 +168,7 @@ impl<T> Queue<T> {
                     let (res, next) = match tail.deref().next.compare_exchange(
                         ptr::null_mut(),
                         block_alloc,
-                        Ordering::Release,
+                        Ordering::SeqCst,
                         Ordering::Relaxed,
                     ) {
                         Ok(_) => (Ok(()), block_alloc),
