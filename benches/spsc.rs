@@ -8,32 +8,32 @@ use criterion::{
 };
 
 fn bench_all(c: &mut Criterion) {
-    let mut group = c.benchmark_group("spsc/unbounded");
-    group.sample_size(20);
+    // let mut group = c.benchmark_group("spsc/unbounded");
+    // group.sample_size(20);
 
-    bench("firefly", &mut group, |_| firefly::spsc::unbounded());
-    bench("firefly-mpsc", &mut group, |_| firefly::mpsc::unbounded());
+    // bench("firefly", &mut group, |_| firefly::spsc::unbounded());
+    // bench("firefly-mpsc", &mut group, |_| firefly::mpsc::unbounded());
 
-    group.finish();
+    // group.finish();
 
     let mut group = c.benchmark_group("spsc/bounded/uncontended");
     group.sample_size(20);
 
     bench("firefly", &mut group, |x| firefly::spsc::bounded(x));
-    bench("firefly-mpsc", &mut group, |x| firefly::mpsc::bounded(x));
+    // bench("firefly-mpsc", &mut group, |x| firefly::mpsc::bounded(x));
 
     group.finish();
 
-    const LOAD: usize = 10;
-    let mut group = c.benchmark_group("spsc/bounded/contended");
-    group.sample_size(20);
+    // const LOAD: usize = 10;
+    // let mut group = c.benchmark_group("spsc/bounded/contended");
+    // group.sample_size(20);
 
-    bench("firefly", &mut group, |x| firefly::spsc::bounded(x / LOAD));
-    bench("firefly-mpsc", &mut group, |x| {
-        firefly::mpsc::bounded(x / LOAD)
-    });
+    // bench("firefly", &mut group, |x| firefly::spsc::bounded(x / LOAD));
+    // bench("firefly-mpsc", &mut group, |x| {
+    //     firefly::mpsc::bounded(x / LOAD)
+    // });
 
-    group.finish();
+    // group.finish();
 }
 
 fn bench<M, S, R>(name: &'static str, g: &mut BenchmarkGroup<'_, M>, chan: impl Fn(usize) -> (S, R))
@@ -55,14 +55,14 @@ where
                     move |_| {
                         barrier.wait();
                         for i in 0..messages {
-                            tx.send(i).unwrap();
+                            tx.send_blocking(i).unwrap();
                         }
                     }
                 });
 
                 barrier.wait();
                 for _ in 0..messages {
-                    rx.recv().unwrap();
+                    rx.recv_blocking().unwrap();
                 }
             })
             .unwrap();

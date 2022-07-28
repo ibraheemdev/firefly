@@ -10,6 +10,7 @@ use std::{
 };
 use usync::Mutex;
 
+use crate::blocking::block_on;
 use crate::util::intrusive_list::{LinkedList, Node};
 
 const EMPTY: u8 = 0;
@@ -88,47 +89,6 @@ impl WaitQueue {
         }
     }
 
-    unsafe fn block_on_pinned<F: Future>(mut fut: Pin<&mut F>) -> F::Output {
-        struct Signal {
-            thread: thread::Thread,
-            notified: AtomicBool,
-            _pin: PhantomPinned,
-        }
-
-        let signal = Signal {
-            thread: thread::current(),
-            notified: AtomicBool::default(),
-            _pin: PhantomPinned,
-        };
-        let signal = Pin::new_unchecked(&signal);
-
-        const VTABLE: RawWakerVTable = RawWakerVTable::new(
-            |ptr| RawWaker::new(ptr, &VTABLE),
-            |ptr| unsafe {
-                let signal = &*ptr.cast::<Signal>();
-                if !signal.notified.swap(true, Ordering::Release) {
-                    signal.thread.unpark();
-                }
-            },
-            |_ptr| unreachable!("wake_by_ref"),
-            |_ptr| {},
-        );
-
-        let ptr = (&*signal as *const Signal).cast::<()>();
-        let waker = Waker::from_raw(RawWaker::new(ptr, &VTABLE));
-        let mut cx = Context::from_waker(&waker);
-
-        loop {
-            if let Poll::Ready(output) = fut.as_mut().poll(&mut cx) {
-                return output;
-            }
-
-            while !signal.notified.swap(false, Ordering::Acquire) {
-                thread::park();
-            }
-        }
-    }
-
     pub async fn poll_fn<T>(
         &self,
         mut should_park: impl FnMut() -> bool,
@@ -183,7 +143,7 @@ impl WaitQueue {
                         drop(lock);
 
                         self.waiter = Some(waiter);
-                        WaitQueue::block_on_pinned(Pin::new(self));
+                        block_on(self);
                     }
                 }
             }

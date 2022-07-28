@@ -53,7 +53,7 @@ impl<T> Queue<T> {
         }
 
         self.tail.index.set(next_index);
-        (*block).slots.get_unchecked(index).write(value);
+        (*block).slots.get_unchecked(index).store(value);
     }
 
     pub unsafe fn pop(&self) -> Option<T> {
@@ -73,7 +73,7 @@ impl<T> Queue<T> {
             self.head.index.set(index);
         }
 
-        let value = block.as_ref().slots.get_unchecked(index).read()?;
+        let value = block.as_ref().slots.get_unchecked(index).load()?;
         self.head.index.set(index + 1);
         Some(value)
     }
@@ -113,12 +113,12 @@ struct Slot<T> {
 }
 
 impl<T> Slot<T> {
-    unsafe fn write(&self, value: T) {
+    unsafe fn store(&self, value: T) {
         self.value.get().write(MaybeUninit::new(value));
-        self.active.store(true, Ordering::Release);
+        self.active.store(true, Ordering::SeqCst);
     }
 
-    unsafe fn read(&self) -> Option<T> {
+    unsafe fn load(&self) -> Option<T> {
         if self.active.load(Ordering::Acquire) {
             return Some(self.value.get().read().assume_init());
         }

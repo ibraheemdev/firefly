@@ -24,12 +24,12 @@ impl WaitCell {
         WaitCell {
             waker: UnsafeCell::new(None),
             locked: AtomicBool::new(false),
-            woke: AtomicBool::new(true),
+            woke: AtomicBool::new(false),
         }
     }
 
     #[inline]
-    pub fn poll_with<T, F>(&self, cx: &mut Context<'_>, mut poll: F) -> Poll<T>
+    pub fn poll_fn<T, F>(&self, cx: &mut Context<'_>, mut poll: F) -> Poll<T>
     where
         F: FnMut() -> Poll<T>,
     {
@@ -48,10 +48,10 @@ impl WaitCell {
 
     unsafe fn poll(&self, waker: &Waker) -> Poll<()> {
         if !self.woke.load(Ordering::Acquire) {
-            let locked = !self.locked.swap(true, Ordering::Acquire);
-            if locked {
-                let will_wake = will_wake(self.waker.get().deref(), waker);
-                if !will_wake {
+            let already_locked = self.locked.swap(true, Ordering::Acquire);
+
+            if !already_locked {
+                if !will_wake(self.waker.get().deref(), waker) {
                     *self.waker.get() = Some(waker.clone());
                 }
 
@@ -59,7 +59,12 @@ impl WaitCell {
             }
 
             if !self.woke.load(Ordering::SeqCst) {
-                assert!(locked);
+                // could have wiped out `woke` before lock released..
+                // and we didn't get to register our waker
+                if already_locked {
+                    return Poll::Ready(());
+                }
+
                 return Poll::Pending;
             }
         }
@@ -69,9 +74,7 @@ impl WaitCell {
     }
 
     pub fn wake(&self) {
-        fence(Ordering::SeqCst);
-
-        if self.woke.load(Ordering::Relaxed) {
+        if self.woke.load(Ordering::SeqCst) {
             return;
         }
 

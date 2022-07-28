@@ -73,7 +73,7 @@ impl Handle {
             .get()
             .write(MaybeUninit::new(value));
 
-        queue.tail.store(next_tail, Ordering::Release);
+        queue.tail.store(next_tail, Ordering::SeqCst);
         self.tail.set(next_tail);
 
         Ok(())
