@@ -2,14 +2,14 @@ use crate::raw::util::CachePadded;
 
 use std::cell::UnsafeCell;
 use std::mem::MaybeUninit;
-use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
-use std::{hint, iter};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{hint, ptr};
 
+// A bounded queue built on two index queues.
 pub struct Queue<T> {
     free: IndexQueue,
     elements: IndexQueue,
     slots: Box<[UnsafeCell<MaybeUninit<T>>]>,
-    order: usize,
 }
 
 unsafe impl<T: Send> Send for Queue<T> {}
@@ -22,9 +22,7 @@ impl<T> Queue<T> {
         }
 
         let capacity = capacity.next_power_of_two();
-        let order = (usize::BITS - capacity.leading_zeros() - 1) as _;
-
-        if order > 31 {
+        if capacity >= MAX_CAPACITY {
             panic!("exceeded maximum queue capacity of {}", MAX_CAPACITY);
         }
 
@@ -32,20 +30,19 @@ impl<T> Queue<T> {
             slots: (0..capacity)
                 .map(|_| UnsafeCell::new(MaybeUninit::uninit()))
                 .collect(),
-            free: IndexQueue::full(order),
-            elements: IndexQueue::empty(order),
-            order,
+            free: IndexQueue::full(capacity),
+            elements: IndexQueue::empty(capacity),
         }
     }
 
     pub fn push(&self, value: T) -> Result<(), T> {
-        match self.free.pop(self.order) {
+        match self.free.pop() {
             Some(elem) => unsafe {
                 self.slots
                     .get_unchecked(elem)
                     .get()
                     .write(MaybeUninit::new(value));
-                self.elements.push(elem, self.order);
+                self.elements.push(elem);
                 Ok(())
             },
             None => Err(value),
@@ -53,10 +50,10 @@ impl<T> Queue<T> {
     }
 
     pub fn pop(&self) -> Option<T> {
-        match self.elements.pop(self.order) {
+        match self.elements.pop() {
             Some(elem) => unsafe {
                 let value = self.slots.get_unchecked(elem).get().read().assume_init();
-                self.free.push(elem, self.order);
+                self.free.push(elem);
                 Some(value)
             },
             None => None,
@@ -74,230 +71,197 @@ impl<T> Queue<T> {
 
 impl<T> Drop for Queue<T> {
     fn drop(&mut self) {
-        while let Some(elem) = self.elements.pop(self.order) {
-            let _: T = unsafe { self.slots[elem].get().read().assume_init() };
+        while let Some(elem) = self.elements.pop() {
+            unsafe { ptr::drop_in_place(self.slots.get_unchecked(elem).get().cast::<T>()) }
         }
     }
 }
 
-// Note: if set by a user, this will round up to 1 << 32.
-const MAX_CAPACITY: usize = (1 << 31) + 1;
+pub const MAX_CAPACITY: usize = u32::MAX as _;
 
-const SPIN_READ: usize = 6;
+const SPIN_LIMIT: usize = 6;
 
 pub struct IndexQueue {
+    // The head and tail of the queue.
     head: CachePadded<AtomicUsize>,
     tail: CachePadded<AtomicUsize>,
-    threshold: CachePadded<AtomicIsize>,
+    // Slots stores an index, a cycle, and a special 'safety' marker:
+    //
+    //        -------------------------------
+    // BITS:  | 64... | order+1 | order...0 |
+    //        -------------------------------
+    // VALUE: | cycle |  safe?  |   index   |
+    //        -------------------------------
+    //
+    // Where `order` is the power of 2 capacity of the queue.
+    // If all the index bits are set to 1, the slot is vacant.
+    //
+    // The number of slots is double the capacity of the queue.
     slots: CachePadded<Box<[AtomicUsize]>>,
 }
 
 impl IndexQueue {
-    pub fn empty(order: usize) -> IndexQueue {
-        let capacity = 1 << order;
-
-        // the number of slots is double the capacity
-        // such that the last reader can always locate
-        // an unused slot no farther than capacity*2 slots
-        // away from the last writer
-        let slots = capacity * 2;
+    pub fn empty(capacity: usize) -> IndexQueue {
+        // the initial slot state, vacant and safe
+        const INIT: usize = !0;
 
         IndexQueue {
             head: CachePadded(AtomicUsize::new(0)),
             tail: CachePadded(AtomicUsize::new(0)),
-            threshold: CachePadded(AtomicIsize::new(-1)),
-            slots: CachePadded(
-                iter::repeat(-1_isize as usize)
-                    .map(AtomicUsize::new)
-                    .take(slots)
-                    .collect(),
-            ),
+            slots: CachePadded((0..capacity * 2).map(|_| AtomicUsize::new(INIT)).collect()),
         }
     }
 
-    pub fn full(order: usize) -> IndexQueue {
-        let capacity = 1 << order;
-        let slots = capacity * 2;
-
-        let mut queue = IndexQueue::empty(order);
+    pub fn full(capacity: usize) -> IndexQueue {
+        let mut queue = IndexQueue::empty(capacity);
 
         for i in 0..capacity {
-            queue.slots[cache_remap!(i, order, slots)] =
-                AtomicUsize::new(raw_cache_remap!(slots + i, order, capacity));
+            queue.slots[i] = AtomicUsize::new(i);
         }
 
         *queue.tail.get_mut() = capacity;
-        *queue.threshold.get_mut() = IndexQueue::threshold(capacity, slots);
 
         queue
     }
 
-    pub fn push(&self, index: usize, order: usize) {
-        let capacity = 1 << order;
-        let slots = capacity * 2;
+    pub fn push(&self, index: usize) {
+        let slots = self.slots.len();
 
-        'next: loop {
+        // note that the fact that we're pushing means we popped a corresponding
+        // index, so we know for sure the queue is not full
+        loop {
             // acquire a slot
             let tail = self.tail.fetch_add(1, Ordering::Relaxed);
-            let tail_index = cache_remap!(tail, order, slots);
-            let cycle = (tail << 1) | (2 * slots - 1);
+            let tail_index = tail & (slots - 1);
+            let tail_cycle = (tail << 1) | cycle_mask!(slots);
 
             let mut slot = unsafe { self.slots.get_unchecked(tail_index).load(Ordering::Acquire) };
 
             'retry: loop {
-                let slot_cycle = slot | (2 * slots - 1);
+                let slot_cycle = slot | cycle_mask!(slots);
 
-                // the slot is from a newer cycle, move to
-                // the next one
-                if wrapping_cmp!(slot_cycle, >=, cycle) {
-                    continue 'next;
+                // our reader has already visited this slot
+                // and updated its cycle, we have to skip it
+                if wrapping_cmp!(slot_cycle, >=, tail_cycle) {
+                    break 'retry;
                 }
 
-                // we can safely read the entry if either:
-                // - the entry is unused and safe
-                // - the entry is unused and _unsafe_ but
-                //   the head is behind the tail, meaning
-                //   all active readers are still behind
+                // we can safely write to the slot if either:
+                // - the slot is vacant and safe
+                // - the slot is vacant and marked as *unsafe*, but our reader
+                // has not started yet, so we can restore the slot's safety
                 if slot == slot_cycle
                     || (slot == slot_cycle ^ slots
                         && wrapping_cmp!(self.head.load(Ordering::Acquire), <=, tail))
                 {
-                    // set the safety bit and cycle
-                    let new_slot = index ^ (slots - 1);
-                    let new_slot = cycle ^ new_slot;
+                    // mark as safe and set the cycle
+                    let index = tail_cycle ^ index ^ (slots - 1);
 
-                    unsafe {
-                        if let Err(new) =
-                            self.slots.get_unchecked(tail_index).compare_exchange_weak(
-                                slot,
-                                new_slot,
-                                Ordering::SeqCst,
-                                Ordering::Acquire,
-                            )
-                        {
-                            slot = new;
-                            continue 'retry;
-                        }
-                    }
-
-                    let threshold = IndexQueue::threshold(capacity, slots);
-
-                    // reset the threshold
-                    if self.threshold.load(Ordering::Acquire) != threshold {
-                        self.threshold.store(threshold, Ordering::Release);
+                    if let Err(found) = unsafe { self.slots.get_unchecked(tail_index) }
+                        .compare_exchange_weak(slot, index, Ordering::AcqRel, Ordering::Acquire)
+                    {
+                        slot = found;
+                        continue 'retry;
                     }
 
                     return;
                 }
 
-                continue 'next;
+                break 'retry;
             }
         }
     }
 
-    pub fn pop(&self, order: usize) -> Option<usize> {
-        // the queue is empty
-        if self.threshold.load(Ordering::Acquire) < 0 {
-            return None;
-        }
+    pub fn pop(&self) -> Option<usize> {
+        let slots = self.slots.len();
 
-        let slots = 1 << (order + 1);
-
-        'next: loop {
+        loop {
             // acquire a slot
             let head = self.head.fetch_add(1, Ordering::Relaxed);
-            let head_index = cache_remap!(head, order, slots);
-            let cycle = (head << 1) | (2 * slots - 1);
+            let head_index = head & (slots - 1);
+            let head_cycle = (head << 1) | cycle_mask!(slots);
 
             let mut spun = 0;
-
             'spin: loop {
                 let mut slot =
                     unsafe { self.slots.get_unchecked(head_index).load(Ordering::Acquire) };
 
                 'retry: loop {
-                    let slot_cycle = slot | (2 * slots - 1);
+                    let slot_cycle = slot | cycle_mask!(slots);
 
-                    // if the cycles match, we can read this slot
-                    if slot_cycle == cycle {
+                    // the cycles match, we can safely read from this slot
+                    if slot_cycle == head_cycle {
+                        // mark as unused, preserving the cycle and safety
                         unsafe {
-                            // mark as unused, but preserve the safety bit
                             self.slots
                                 .get_unchecked(head_index)
                                 .fetch_or(slots - 1, Ordering::AcqRel);
                         }
-
-                        // extract the index (ignore cycle and safety bit)
                         return Some(slot & (slots - 1));
                     }
 
-                    if wrapping_cmp!(slot_cycle, <, cycle) {
-                        // otherwise, we have to update the cycle
+                    // this slot is from an earlier cycle
+                    if wrapping_cmp!(slot_cycle, <, head_cycle) {
+                        // if the slot is unused, we can update the cycle
+                        // for the *next* cycle's writer to use
                         let new_slot = if (slot | slots) == slot_cycle {
-                            // spin for a bit before invalidating
-                            // the slot for writers from a previous
-                            // cycle in case they arrive soon
-                            if spun < SPIN_READ {
-                                spun += 1;
-
+                            // but first, spin for a bit before invalidating
+                            // the slot in case the writer arrives soon
+                            if spun <= SPIN_LIMIT {
                                 for _ in 0..spun.pow(2) {
                                     hint::spin_loop()
                                 }
 
+                                spun += 1;
                                 continue 'spin;
                             }
 
-                            // the slot is unused, preserve the safety bit
-                            cycle ^ (!slot & slots)
-                        } else {
-                            // mark the slot as unsafe
-                            let new_entry = slot & !slots;
+                            // make sure to preserve the safety bit
+                            head_cycle ^ (!slot & slots)
+                        }
+                        // if the slot is occupied by a previous cycle, we need to
+                        // mark it as unsafe so the future writer knows to skip it
+                        else {
+                            let unsafe_slot = slot & !slots;
 
-                            if slot == new_entry {
+                            // the slot is already unsafe from a previous cycle
+                            if slot == unsafe_slot {
                                 break 'retry;
                             }
 
-                            new_entry
+                            unsafe_slot
                         };
 
-                        unsafe {
-                            if let Err(new) =
-                                self.slots.get_unchecked(head_index).compare_exchange_weak(
-                                    slot,
-                                    new_slot,
-                                    Ordering::AcqRel,
-                                    Ordering::Acquire,
-                                )
-                            {
-                                slot = new;
-                                continue 'retry;
-                            }
+                        if let Err(found) = unsafe { self.slots.get_unchecked(head_index) }
+                            .compare_exchange_weak(
+                                slot,
+                                new_slot,
+                                Ordering::AcqRel,
+                                Ordering::Acquire,
+                            )
+                        {
+                            slot = found;
+                            continue 'retry;
                         }
                     }
 
                     break 'retry;
                 }
 
-                // check if the queue is empty
                 let tail = self.tail.load(Ordering::Acquire);
 
-                // if the head overtook the tail, push the tail forward
+                // the queue is empty, help the tail forward
                 if tail <= head + 1 {
-                    self.catchup(tail, head + 1);
-                    self.threshold.fetch_sub(1, Ordering::AcqRel);
+                    self.help_tail(tail, head + 1);
                     return None;
                 }
 
-                if self.threshold.fetch_sub(1, Ordering::AcqRel) <= 0 {
-                    return None;
-                }
-
-                continue 'next;
+                break 'spin;
             }
         }
     }
 
-    fn catchup(&self, mut tail: usize, mut head: usize) {
+    fn help_tail(&self, mut tail: usize, mut head: usize) {
         while let Err(found) =
             self.tail
                 .compare_exchange_weak(tail, head, Ordering::AcqRel, Ordering::Acquire)
@@ -312,15 +276,17 @@ impl IndexQueue {
     }
 
     pub fn is_empty(&self) -> bool {
-        let tail = self.tail.load(Ordering::Acquire);
-        let head = self.head.load(Ordering::Acquire);
-        head == tail
+        self.tail.load(Ordering::Acquire) <= self.head.load(Ordering::Acquire)
     }
+}
 
-    #[inline(always)]
-    fn threshold(half: usize, cap: usize) -> isize {
-        ((half + cap) - 1) as isize
-    }
+// Masks a slot's index and safety bit.
+//
+// Note that the head/tail must be shifted to account for the safety bit.
+macro_rules! cycle_mask {
+    ($slots:ident) => {
+        (2 * $slots - 1)
+    };
 }
 
 macro_rules! wrapping_cmp {
@@ -329,27 +295,16 @@ macro_rules! wrapping_cmp {
     }
 }
 
-macro_rules! cache_remap {
-    ($i:expr, $order:expr, $n:expr) => {
-        raw_cache_remap!($i, ($order) + 1, $n)
-    };
-}
+// macro_rules! cache_remap {
+//     ($i:expr, $order:expr, $n:expr) => {
+//         raw_cache_remap!($i, ($order) + 1, $n)
+//     };
+// }
+//
+// macro_rules! raw_cache_remap {
+//     ($i:expr, $order:expr, $n:expr) => {
+//         ((($i) & (($n) - 1)) >> (($order) - MIN)) | ((($i) << MIN) & (($n) - 1))
+//     };
+// }
 
-macro_rules! raw_cache_remap {
-    ($i:expr, $order:expr, $n:expr) => {
-        ((($i) & (($n) - 1)) >> (($order) - MIN)) | ((($i) << MIN) & (($n) - 1))
-    };
-}
-
-pub(self) use {cache_remap, raw_cache_remap, wrapping_cmp};
-
-const CACHE_SHIFT: usize = 7; // TODO: non-x86
-
-#[cfg(target_pointer_width = "32")]
-const MIN: usize = CACHE_SHIFT - 2;
-
-#[cfg(target_pointer_width = "64")]
-const MIN: usize = CACHE_SHIFT - 3;
-
-#[cfg(target_pointer_width = "128")]
-const MIN: usize = CACHE_SHIFT - 4;
+use {cycle_mask, wrapping_cmp};
