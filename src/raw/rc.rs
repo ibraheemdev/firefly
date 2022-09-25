@@ -1,11 +1,12 @@
-use crate::util::UnsafeDeref;
+use super::util::UnsafeDeref;
 
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-pub fn alloc<C, const MAX_SENDERS: usize, const MAX_RECEIVERS: usize>(
-    chan: C,
-) -> (Sender<C, MAX_SENDERS>, Receiver<C, MAX_RECEIVERS>) {
+/// Allocate a channel as a sender/receiver pair.
+pub fn alloc<T, const SENDERS: usize, const RECEIVERS: usize>(
+    chan: T,
+) -> (Sender<T, SENDERS>, Receiver<T, RECEIVERS>) {
     let rc = Box::into_raw(Box::new(Rc {
         senders: AtomicUsize::new(1),
         receivers: AtomicUsize::new(1),
@@ -18,6 +19,7 @@ pub fn alloc<C, const MAX_SENDERS: usize, const MAX_RECEIVERS: usize>(
     (tx, rx)
 }
 
+/// A reference counted channel.
 struct Rc<T> {
     senders: AtomicUsize,
     receivers: AtomicUsize,
@@ -25,11 +27,13 @@ struct Rc<T> {
     chan: T,
 }
 
+/// The sending half of a channel.
 pub struct Sender<T, const MAX: usize = { isize::MAX as _ }> {
     rc: *mut Rc<T>,
 }
 
 impl<T, const MAX: usize> Sender<T, MAX> {
+    /// Clones this sender.
     pub fn clone(&self) -> Sender<T, MAX> {
         let count = unsafe { self.rc.deref().senders.fetch_add(1, Ordering::Relaxed) };
 
@@ -40,6 +44,8 @@ impl<T, const MAX: usize> Sender<T, MAX> {
         Sender { rc: self.rc }
     }
 
+    /// Drops the sender, running `disconnect` if this is the last sender handle
+    /// and the receiver is still connected.
     pub unsafe fn drop<F>(&self, disconnect: F)
     where
         F: FnOnce(),
@@ -47,14 +53,15 @@ impl<T, const MAX: usize> Sender<T, MAX> {
         if self.rc.deref().senders.fetch_sub(1, Ordering::AcqRel) == 1 {
             let disconnected = self.rc.deref().disconnected.swap(true, Ordering::AcqRel);
 
-            disconnect();
-
             if disconnected {
                 let _ = Box::from_raw(self.rc);
+            } else {
+                disconnect()
             }
         }
     }
 
+    ///  Returns `true` if the receiving half of the channel is disconnected.
     pub fn is_disconnected(&self) -> bool {
         unsafe { self.rc.deref().disconnected.load(Ordering::Relaxed) }
     }
@@ -68,11 +75,13 @@ impl<T, const MAX: usize> Deref for Sender<T, MAX> {
     }
 }
 
+/// The receiving half of a channel.
 pub struct Receiver<T, const MAX: usize = { isize::MAX as _ }> {
     rc: *mut Rc<T>,
 }
 
 impl<T, const MAX: usize> Receiver<T, MAX> {
+    /// Clones this receiver.
     pub fn clone(&self) -> Receiver<T, MAX> {
         let count = unsafe { self.rc.deref().receivers.fetch_add(1, Ordering::Relaxed) };
 
@@ -83,6 +92,8 @@ impl<T, const MAX: usize> Receiver<T, MAX> {
         Receiver { rc: self.rc }
     }
 
+    /// Drops the receiver, running `disconnect` if this is the last receiver handle
+    /// and the sender is still connected.
     pub unsafe fn drop<F>(&self, disconnect: F)
     where
         F: FnOnce(),
@@ -90,14 +101,15 @@ impl<T, const MAX: usize> Receiver<T, MAX> {
         if self.rc.deref().receivers.fetch_sub(1, Ordering::AcqRel) == 1 {
             let disconnected = self.rc.deref().disconnected.swap(true, Ordering::AcqRel);
 
-            disconnect();
-
             if disconnected {
                 let _ = Box::from_raw(self.rc);
+            } else {
+                disconnect()
             }
         }
     }
 
+    ///  Returns `true` if the receiving half of the channel is disconnected.
     pub fn is_disconnected(&self) -> bool {
         unsafe { self.rc.deref().disconnected.load(Ordering::Relaxed) }
     }

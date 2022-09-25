@@ -12,7 +12,7 @@ fn bench_all(c: &mut Criterion) {
     group.sample_size(20);
 
     bench("firefly", &mut group, |_| firefly::mpsc::unbounded());
-    bench("firefly-mpfc", &mut group, |_| firefly::mpfc::unbounded());
+    bench("firefly-mpfc", &mut group, |_| firefly::mpmc::unbounded());
     bench("flume", &mut group, |_| flume::unbounded());
     bench("std::sync::mpsc", &mut group, |_| {
         std::sync::mpsc::channel()
@@ -27,7 +27,7 @@ fn bench_all(c: &mut Criterion) {
     group.sample_size(20);
 
     bench("firefly", &mut group, |x| firefly::mpsc::bounded(x));
-    bench("firefly-mpfc", &mut group, |x| firefly::mpfc::bounded(x));
+    bench("firefly-mpfc", &mut group, |x| firefly::mpmc::bounded(x));
     bench("flume", &mut group, |x| flume::bounded(x));
     bench("std::sync::mpsc", &mut group, |x| {
         std::sync::mpsc::sync_channel(x)
@@ -47,7 +47,7 @@ fn bench_all(c: &mut Criterion) {
 
     bench("firefly", &mut group, |x| firefly::mpsc::bounded(x / LOAD));
     bench("firefly-mpfc", &mut group, |x| {
-        firefly::mpfc::bounded(x / LOAD)
+        firefly::mpmc::bounded(x / LOAD)
     });
     bench("flume", &mut group, |x| flume::bounded(x / LOAD));
     bench("std::sync::mpsc", &mut group, |x| {
@@ -84,14 +84,14 @@ where
                     scope.spawn(move |_| {
                         barrier.wait();
                         for i in 0..messages / threads {
-                            tx.send(i).unwrap();
+                            tx.send_blocking(i).unwrap();
                         }
                     });
                 }
 
                 barrier.wait();
                 for _ in 0..messages {
-                    rx.recv().unwrap();
+                    rx.recv_blocking().unwrap();
                 }
             })
             .unwrap();

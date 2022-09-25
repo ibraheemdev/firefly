@@ -1,8 +1,7 @@
-mod queue;
-
 use crate::error::*;
-use crate::wait::mpsc::WaitCell;
-use crate::{blocking, rc, util};
+use crate::raw::parking::Task;
+use crate::raw::queues::mpsc_unbounded as queue;
+use crate::raw::{blocking, rc, util};
 
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -10,7 +9,7 @@ use std::time::Duration;
 pub(super) fn new<T>() -> (UnboundedSender<T>, UnboundedReceiver<T>) {
     let (tx, rx) = rc::alloc(Channel {
         queue: queue::Queue::new(),
-        receiver: WaitCell::new(),
+        receiver: Task::new(),
     });
 
     (UnboundedSender(tx), UnboundedReceiver(rx))
@@ -18,12 +17,13 @@ pub(super) fn new<T>() -> (UnboundedSender<T>, UnboundedReceiver<T>) {
 
 struct Channel<T> {
     queue: queue::Queue<T>,
-    receiver: WaitCell,
+    receiver: Task,
 }
 
-pub struct UnboundedSender<T>(rc::Sender<Channel<T>, 1>);
+pub struct UnboundedSender<T>(rc::Sender<Channel<T>, { queue::MAX_SENDERS }>);
 
 unsafe impl<T: Send> Send for UnboundedSender<T> {}
+unsafe impl<T: Send> Sync for UnboundedSender<T> {}
 
 impl<T> UnboundedSender<T> {
     pub fn send(&self, value: T) -> Result<(), SendError<T>> {
@@ -31,8 +31,8 @@ impl<T> UnboundedSender<T> {
             return Err(SendError(value));
         }
 
-        unsafe { self.0.queue.push(value) }
-        self.0.receiver.wake();
+        self.0.queue.push(value);
+        self.0.receiver.unpark();
         Ok(())
     }
 }
@@ -55,7 +55,7 @@ impl<T> UnboundedReceiver<T> {
     }
 
     pub fn poll_recv(&self, cx: &mut Context<'_>) -> Poll<Result<T, RecvError>> {
-        self.0.receiver.poll_fn(cx, || match self.try_recv() {
+        self.0.receiver.block_on(cx, || match self.try_recv() {
             Ok(value) => return Poll::Ready(Ok(value)),
             Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
             Err(TryRecvError::Empty) => Poll::Pending,
@@ -72,11 +72,21 @@ impl<T> UnboundedReceiver<T> {
             None => Err(RecvTimeoutError::Timeout),
         }
     }
+
+    pub fn is_empty(&self) -> bool {
+        unsafe { self.0.queue.is_empty() }
+    }
+}
+
+impl<T> Clone for UnboundedSender<T> {
+    fn clone(&self) -> Self {
+        UnboundedSender(self.0.clone())
+    }
 }
 
 impl<T> Drop for UnboundedSender<T> {
     fn drop(&mut self) {
-        unsafe { self.0.drop(|| self.0.receiver.wake()) }
+        unsafe { self.0.drop(|| self.0.receiver.unpark()) }
     }
 }
 

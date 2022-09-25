@@ -54,12 +54,12 @@ impl_chan! {
     firefly::mpsc::Receiver<T> |c| { c.recv_blocking().map_err(drop) };
 }
 impl_chan! {
-    firefly::mpfc::UnboundedSender<T> |c, val| { c.send(val).map_err(drop) };
-    firefly::mpfc::UnboundedReceiver<T> |c| { c.recv_blocking().map_err(drop) };
+    firefly::mpmc::UnboundedSender<T> |c, val| { c.send(val).map_err(drop) };
+    firefly::mpmc::UnboundedReceiver<T> |c| { c.recv_blocking().map_err(drop) };
 }
 impl_chan! {
-    firefly::mpfc::Sender<T> |c, val| { c.send_blocking(val).map_err(drop) };
-    firefly::mpfc::Receiver<T> |c| { c.recv_blocking().map_err(drop) };
+    firefly::mpmc::Sender<T> |c, val| { c.send_blocking(val).map_err(drop) };
+    firefly::mpmc::Receiver<T> |c| { c.recv_blocking().map_err(drop) };
 }
 impl_chan! {
     thingbuf::mpsc::blocking::Sender<T> |c, val| { c.send(val).map_err(drop) };

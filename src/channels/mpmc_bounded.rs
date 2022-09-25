@@ -1,53 +1,40 @@
-mod queue;
-
 use crate::error::*;
-use crate::wait::mpsc::WaitCell;
-use crate::{blocking, rc, util};
+use crate::raw::parking::TaskQueue;
+use crate::raw::queues::mpmc_bounded::Queue;
+use crate::raw::{blocking, rc};
 
-use std::task::{Context, Poll};
+use std::task::Poll;
 use std::time::Duration;
 
 pub(super) fn new<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
     let (tx, rx) = rc::alloc(Channel {
-        queue: queue::Queue::new(capacity),
-        receiver: WaitCell::new(),
-        sender: WaitCell::new(),
+        queue: Queue::new(capacity),
+        receivers: TaskQueue::new(),
+        senders: TaskQueue::new(),
     });
 
-    let sender = Sender {
-        chan: tx,
-        handle: queue::Handle::new(),
-    };
-
-    let receiver = Receiver {
-        chan: rx,
-        handle: queue::Handle::new(),
-    };
-
-    (sender, receiver)
+    (Sender(tx), Receiver(rx))
 }
 
 struct Channel<T> {
-    queue: queue::Queue<T>,
-    receiver: WaitCell,
-    sender: WaitCell,
+    queue: Queue<T>,
+    receivers: TaskQueue,
+    senders: TaskQueue,
 }
 
-pub struct Sender<T> {
-    chan: rc::Sender<Channel<T>, 1>,
-    handle: queue::Handle,
-}
+pub struct Sender<T>(rc::Sender<Channel<T>>);
 
 unsafe impl<T: Send> Send for Sender<T> {}
+unsafe impl<T: Send> Sync for Sender<T> {}
 
 impl<T> Sender<T> {
     pub fn try_send(&self, value: T) -> Result<(), TrySendError<T>> {
-        match unsafe { self.handle.push(value, &self.chan.queue) } {
+        match self.0.queue.push(value) {
             Ok(_) => {
-                self.chan.receiver.wake();
+                self.0.receivers.unpark_one();
                 Ok(())
             }
-            Err(value) if self.chan.is_disconnected() => Err(TrySendError::Disconnected(value)),
+            Err(value) if self.0.is_disconnected() => Err(TrySendError::Disconnected(value)),
             Err(value) => Err(TrySendError::Full(value)),
         }
     }
@@ -75,9 +62,8 @@ impl<T> Sender<T> {
     }
 
     pub async fn send_inner(&self, state: &mut Option<T>) -> Result<(), SendError<T>> {
-        let mut try_send = || {
+        let poll = || {
             let value = state.take().unwrap();
-
             match self.try_send(value) {
                 Ok(()) => Poll::Ready(Ok(())),
                 Err(TrySendError::Disconnected(value)) => Poll::Ready(Err(SendError(value))),
@@ -88,39 +74,45 @@ impl<T> Sender<T> {
             }
         };
 
-        util::poll_fn(|cx| self.chan.sender.poll_fn(cx, || try_send())).await
+        self.0
+            .senders
+            .block_on(poll, || self.0.queue.is_full())
+            .await
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.queue.is_empty()
     }
 }
 
-pub struct Receiver<T> {
-    chan: rc::Receiver<Channel<T>, 1>,
-    handle: queue::Handle,
-}
+pub struct Receiver<T>(rc::Receiver<Channel<T>>);
 
 unsafe impl<T: Send> Send for Receiver<T> {}
+unsafe impl<T: Send> Sync for Receiver<T> {}
 
 impl<T> Receiver<T> {
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
-        match unsafe { self.handle.pop(&self.chan.queue) } {
+        match self.0.queue.pop() {
             Some(value) => {
-                self.chan.sender.wake();
+                self.0.senders.unpark_one();
                 Ok(value)
             }
-            None if self.chan.is_disconnected() => Err(TryRecvError::Disconnected),
+            None if self.0.is_disconnected() => Err(TryRecvError::Disconnected),
             None => Err(TryRecvError::Empty),
         }
     }
 
     pub async fn recv(&self) -> Result<T, RecvError> {
-        util::poll_fn(|cx| self.poll_recv(cx)).await
-    }
-
-    pub fn poll_recv(&self, cx: &mut Context<'_>) -> Poll<Result<T, RecvError>> {
-        self.chan.receiver.poll_fn(cx, || match self.try_recv() {
-            Ok(value) => return Poll::Ready(Ok(value)),
-            Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
+        let poll = || match self.try_recv() {
+            Ok(value) => Poll::Ready(Ok(value)),
+            Err(TryRecvError::Disconnected) => Poll::Ready(Err(RecvError)),
             Err(TryRecvError::Empty) => Poll::Pending,
-        })
+        };
+
+        self.0
+            .receivers
+            .block_on(poll, || self.0.queue.is_empty())
+            .await
     }
 
     pub fn recv_blocking(&self) -> Result<T, RecvError> {
@@ -135,18 +127,30 @@ impl<T> Receiver<T> {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.chan.queue.is_empty()
+        self.0.queue.is_empty()
+    }
+}
+
+impl<T> Clone for Sender<T> {
+    fn clone(&self) -> Self {
+        Sender(self.0.clone())
     }
 }
 
 impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
-        unsafe { self.chan.drop(|| self.chan.receiver.wake()) }
+        unsafe { self.0.drop(|| self.0.receivers.unpark_all()) }
+    }
+}
+
+impl<T> Clone for Receiver<T> {
+    fn clone(&self) -> Self {
+        Receiver(self.0.clone())
     }
 }
 
 impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
-        unsafe { self.chan.drop(|| self.chan.sender.wake()) }
+        unsafe { self.0.drop(|| self.0.senders.unpark_all()) }
     }
 }

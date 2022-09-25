@@ -11,7 +11,7 @@ fn bench_all(c: &mut Criterion) {
     let mut group = c.benchmark_group("spmc/bounded/uncontended");
     group.sample_size(20);
 
-    bench("firefly-mpfc", &mut group, |x| firefly::mpfc::bounded(x));
+    bench("firefly-mpfc", &mut group, |x| firefly::mpmc::bounded(x));
     bench("flume", &mut group, |x| flume::bounded(x));
     bench("crossbeam-channel", &mut group, |x| {
         crossbeam::channel::bounded(x)
@@ -24,7 +24,7 @@ fn bench_all(c: &mut Criterion) {
     group.sample_size(20);
 
     bench("firefly-mpfc", &mut group, |x| {
-        firefly::mpfc::bounded(x / LOAD)
+        firefly::mpmc::bounded(x / LOAD)
     });
     bench("flume", &mut group, |x| flume::bounded(x / LOAD));
     bench("crossbeam-channel", &mut group, |x| {
@@ -55,14 +55,14 @@ where
                     scope.spawn(move |_| {
                         barrier.wait();
                         for _ in 0..messages / threads {
-                            rx.recv().unwrap();
+                            rx.recv_blocking().unwrap();
                         }
                     });
                 }
 
                 barrier.wait();
                 for i in 0..messages {
-                    tx.send(i).unwrap();
+                    tx.send_blocking(i).unwrap();
                 }
             })
             .unwrap();

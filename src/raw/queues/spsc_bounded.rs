@@ -1,4 +1,4 @@
-use crate::util::CachePadded;
+use crate::raw::util::CachePadded;
 
 use std::cell::{Cell, UnsafeCell};
 use std::mem::MaybeUninit;

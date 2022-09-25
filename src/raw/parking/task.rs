@@ -1,5 +1,4 @@
-use super::will_wake;
-use crate::util::UnsafeDeref;
+use crate::raw::util::UnsafeDeref;
 
 use std::cell::UnsafeCell;
 use std::hint;
@@ -10,37 +9,39 @@ use std::task::Context;
 use std::task::Poll;
 use std::task::Waker;
 
+/// An asynchronous task that can be parked/unparked.
 #[derive(Default)]
-pub struct WaitCell {
+pub struct Task {
     state: AtomicU8,
     waker: UnsafeCell<Option<Waker>>,
 }
 
-unsafe impl Send for WaitCell {}
-unsafe impl Sync for WaitCell {}
+unsafe impl Send for Task {}
+unsafe impl Sync for Task {}
 
 const WAITING: u8 = 0b000;
 const WOKE: u8 = 0b001;
 const REGISTERING: u8 = 0b010;
 const WAKING: u8 = 0b100;
 
-impl WaitCell {
-    pub fn new() -> WaitCell {
-        WaitCell {
+impl Task {
+    pub fn new() -> Task {
+        Task {
             state: AtomicU8::new(WAITING),
             waker: UnsafeCell::new(None),
         }
     }
 
+    /// Asynchronously 'block' until a resource is ready, parking the
+    /// task if it is not.
     #[inline]
-    pub fn poll_fn<T, F>(&self, cx: &mut Context<'_>, mut poll: F) -> Poll<T>
+    pub fn block_on<T, F>(&self, cx: &mut Context<'_>, mut poll: F) -> Poll<T>
     where
         F: FnMut() -> Poll<T>,
     {
         loop {
-            match (poll)() {
-                Poll::Ready(value) => return Poll::Ready(value),
-                Poll::Pending => {}
+            if let Poll::Ready(value) = (poll)() {
+                return Poll::Ready(value);
             }
 
             match unsafe { self.poll(cx.waker()) } {
@@ -54,7 +55,10 @@ impl WaitCell {
         let mut state = self.state.load(Ordering::Relaxed);
 
         if state == WAITING {
-            let will_wake = will_wake(self.waker.get().deref(), waker);
+            let will_wake = {
+                let current = self.waker.get().deref();
+                current.as_ref().filter(|c| c.will_wake(waker)).is_some()
+            };
 
             if !will_wake {
                 match self.state.compare_exchange(
@@ -101,7 +105,8 @@ impl WaitCell {
         }
     }
 
-    pub fn wake(&self) {
+    /// Unpark the task.
+    pub fn unpark(&self) {
         let mut state = self.state.load(Ordering::SeqCst);
 
         loop {

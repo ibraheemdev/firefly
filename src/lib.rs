@@ -1,15 +1,10 @@
+#![allow(unstable_name_collisions)]
 #![doc = include_str!("../README.md")]
-#![allow(unstable_name_collisions, clippy::collapsible_if, dead_code, unused)]
 
-pub mod mpfc;
-pub mod mpsc;
-pub mod spsc;
-
-mod blocking;
+mod channels;
 mod error;
-mod rc;
-mod util;
-mod wait;
+mod raw;
 
+pub use channels::*;
 pub use error::{RecvError, RecvTimeoutError, TryRecvError};
 pub use error::{SendError, SendTimeoutError, TrySendError};

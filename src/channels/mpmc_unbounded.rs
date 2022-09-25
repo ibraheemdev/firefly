@@ -1,8 +1,7 @@
-mod queue;
-
 use crate::error::*;
-use crate::wait::mpmc::WaitQueue;
-use crate::{blocking, rc};
+use crate::raw::parking::TaskQueue;
+use crate::raw::queues::mpmc_unbounded as queue;
+use crate::raw::{blocking, rc};
 
 use std::task::Poll;
 use std::time::Duration;
@@ -10,7 +9,7 @@ use std::time::Duration;
 pub(super) fn new<T>() -> (UnboundedSender<T>, UnboundedReceiver<T>) {
     let (tx, rx) = rc::alloc(Channel {
         queue: queue::Queue::new(),
-        receivers: WaitQueue::new(),
+        receivers: TaskQueue::new(),
     });
 
     (UnboundedSender(tx), UnboundedReceiver(rx))
@@ -18,7 +17,7 @@ pub(super) fn new<T>() -> (UnboundedSender<T>, UnboundedReceiver<T>) {
 
 struct Channel<T> {
     queue: queue::Queue<T>,
-    receivers: WaitQueue,
+    receivers: TaskQueue,
 }
 
 pub struct UnboundedSender<T>(rc::Sender<Channel<T>, { queue::MAX_SENDERS }>);
@@ -33,7 +32,7 @@ impl<T> UnboundedSender<T> {
         }
 
         self.0.queue.push(value);
-        self.0.receivers.wake();
+        self.0.receivers.unpark_one();
         Ok(())
     }
 
@@ -57,16 +56,15 @@ impl<T> UnboundedReceiver<T> {
     }
 
     pub async fn recv(&self) -> Result<T, RecvError> {
+        let poll = || match self.try_recv() {
+            Ok(value) => Poll::Ready(Ok(value)),
+            Err(TryRecvError::Disconnected) => Poll::Ready(Err(RecvError)),
+            Err(TryRecvError::Empty) => Poll::Pending,
+        };
+
         self.0
             .receivers
-            .poll_fn(
-                || self.0.queue.is_empty(),
-                || match self.try_recv() {
-                    Ok(value) => Poll::Ready(Ok(value)),
-                    Err(TryRecvError::Disconnected) => Poll::Ready(Err(RecvError)),
-                    Err(TryRecvError::Empty) => Poll::Pending,
-                },
-            )
+            .block_on(poll, || self.0.queue.is_empty())
             .await
     }
 
@@ -94,7 +92,7 @@ impl<T> Clone for UnboundedSender<T> {
 
 impl<T> Drop for UnboundedSender<T> {
     fn drop(&mut self) {
-        unsafe { self.0.drop(|| self.0.receivers.wake_all()) }
+        unsafe { self.0.drop(|| self.0.receivers.unpark_all()) }
     }
 }
 
