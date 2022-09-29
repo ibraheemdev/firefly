@@ -1,9 +1,9 @@
 use crate::error::*;
-use crate::raw::parking::Task;
+use crate::raw::parking::{task, Task};
 use crate::raw::queues::mpsc_unbounded as queue;
-use crate::raw::{blocking, rc, util};
+use crate::raw::{blocking, rc};
 
-use std::task::{Context, Poll};
+use std::task::Poll;
 use std::time::Duration;
 
 pub(super) fn new<T>() -> (UnboundedSender<T>, UnboundedReceiver<T>) {
@@ -45,17 +45,16 @@ impl<T> UnboundedReceiver<T> {
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
         match unsafe { self.0.queue.pop() } {
             Some(value) => Ok(value),
-            None if self.0.is_disconnected() => Err(TryRecvError::Disconnected),
+            None if self.0.is_disconnected() => {
+                unsafe { self.0.queue.pop() }.ok_or(TryRecvError::Disconnected)
+            }
             None => Err(TryRecvError::Empty),
         }
     }
 
+    #[inline(always)]
     pub async fn recv(&self) -> Result<T, RecvError> {
-        util::poll_fn(|cx| self.poll_recv(cx)).await
-    }
-
-    pub fn poll_recv(&self, cx: &mut Context<'_>) -> Poll<Result<T, RecvError>> {
-        self.0.receiver.block_on(cx, || match self.try_recv() {
+        task::block_on!(self.0.receiver => || match self.try_recv() {
             Ok(value) => return Poll::Ready(Ok(value)),
             Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
             Err(TryRecvError::Empty) => Poll::Pending,

@@ -1,9 +1,9 @@
 use crate::error::*;
-use crate::raw::parking::Task;
+use crate::raw::parking::task::{self, Task};
 use crate::raw::queues::spsc_bounded as queue;
-use crate::raw::{blocking, rc, util};
+use crate::raw::{blocking, rc};
 
-use std::task::{Context, Poll};
+use std::task::Poll;
 use std::time::Duration;
 
 pub(super) fn new<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
@@ -41,14 +41,13 @@ unsafe impl<T: Send> Send for Sender<T> {}
 
 impl<T> Sender<T> {
     pub fn try_send(&self, value: T) -> Result<(), TrySendError<T>> {
-        match unsafe { self.handle.push(value, &self.chan.queue) } {
-            Ok(_) => {
-                self.chan.receiver.unpark();
-                Ok(())
-            }
-            Err(value) if self.chan.is_disconnected() => Err(TrySendError::Disconnected(value)),
-            Err(value) => Err(TrySendError::Full(value)),
+        if self.chan.is_disconnected() {
+            return Err(TrySendError::Disconnected(value));
         }
+
+        unsafe { self.handle.push(value, &self.chan.queue) }
+            .map(|_| self.chan.receiver.unpark())
+            .map_err(TrySendError::Full)
     }
 
     pub async fn send(&self, value: T) -> Result<(), SendError<T>> {
@@ -74,9 +73,8 @@ impl<T> Sender<T> {
     }
 
     pub async fn send_inner(&self, state: &mut Option<T>) -> Result<(), SendError<T>> {
-        let mut try_send = || {
+        task::block_on!(self.chan.sender => || {
             let value = state.take().unwrap();
-
             match self.try_send(value) {
                 Ok(()) => Poll::Ready(Ok(())),
                 Err(TrySendError::Disconnected(value)) => Poll::Ready(Err(SendError(value))),
@@ -85,9 +83,7 @@ impl<T> Sender<T> {
                     Poll::Pending
                 }
             }
-        };
-
-        util::poll_fn(|cx| self.chan.sender.block_on(cx, || try_send())).await
+        })
     }
 }
 
@@ -105,17 +101,21 @@ impl<T> Receiver<T> {
                 self.chan.sender.unpark();
                 Ok(value)
             }
-            None if self.chan.is_disconnected() => Err(TryRecvError::Disconnected),
+            None if self.chan.is_disconnected() => {
+                match unsafe { self.handle.pop(&self.chan.queue) } {
+                    Some(value) => {
+                        self.chan.sender.unpark();
+                        Ok(value)
+                    }
+                    _ => Err(TryRecvError::Disconnected),
+                }
+            }
             None => Err(TryRecvError::Empty),
         }
     }
 
     pub async fn recv(&self) -> Result<T, RecvError> {
-        util::poll_fn(|cx| self.poll_recv(cx)).await
-    }
-
-    pub fn poll_recv(&self, cx: &mut Context<'_>) -> Poll<Result<T, RecvError>> {
-        self.chan.receiver.block_on(cx, || match self.try_recv() {
+        task::block_on!(self.chan.receiver => || match self.try_recv() {
             Ok(value) => return Poll::Ready(Ok(value)),
             Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
             Err(TryRecvError::Empty) => Poll::Pending,

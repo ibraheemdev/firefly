@@ -80,11 +80,11 @@ unsafe impl<T> StrictProvenance for *mut T {
     }
 }
 
-/// Creates a future that wraps a `poll` function.
-pub async fn poll_fn<T, F>(poll: F) -> T
+pub fn poll_fn<T, F>(poll: F) -> impl Future<Output = T>
 where
     F: FnMut(&mut Context<'_>) -> Poll<T>,
 {
+    /// A future that wraps a `poll` function.
     struct PollFn<F>(F);
 
     impl<F> Unpin for PollFn<F> {}
@@ -100,7 +100,7 @@ where
         }
     }
 
-    PollFn(poll).await
+    PollFn(poll)
 }
 
 /// Pads a value to the length of a cacheline.

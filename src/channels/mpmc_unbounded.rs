@@ -1,6 +1,6 @@
 use crate::error::*;
-use crate::raw::parking::TaskQueue;
-use crate::raw::queues::mpmc_unbounded as queue;
+use crate::raw::parking::queue::{self, TaskQueue};
+use crate::raw::queues::mpmc_unbounded::{Queue, MAX_RECEIVERS, MAX_SENDERS};
 use crate::raw::{blocking, rc};
 
 use std::task::Poll;
@@ -8,7 +8,7 @@ use std::time::Duration;
 
 pub(super) fn new<T>() -> (UnboundedSender<T>, UnboundedReceiver<T>) {
     let (tx, rx) = rc::alloc(Channel {
-        queue: queue::Queue::new(),
+        queue: Queue::new(),
         receivers: TaskQueue::new(),
     });
 
@@ -16,11 +16,11 @@ pub(super) fn new<T>() -> (UnboundedSender<T>, UnboundedReceiver<T>) {
 }
 
 struct Channel<T> {
-    queue: queue::Queue<T>,
+    queue: Queue<T>,
     receivers: TaskQueue,
 }
 
-pub struct UnboundedSender<T>(rc::Sender<Channel<T>, { queue::MAX_SENDERS }>);
+pub struct UnboundedSender<T>(rc::Sender<Channel<T>, { MAX_SENDERS }>);
 
 unsafe impl<T: Send> Send for UnboundedSender<T> {}
 unsafe impl<T: Send> Sync for UnboundedSender<T> {}
@@ -41,7 +41,7 @@ impl<T> UnboundedSender<T> {
     }
 }
 
-pub struct UnboundedReceiver<T>(rc::Receiver<Channel<T>, { queue::MAX_RECEIVERS }>);
+pub struct UnboundedReceiver<T>(rc::Receiver<Channel<T>, { MAX_RECEIVERS }>);
 
 unsafe impl<T: Send> Send for UnboundedReceiver<T> {}
 unsafe impl<T: Send> Sync for UnboundedReceiver<T> {}
@@ -50,22 +50,22 @@ impl<T> UnboundedReceiver<T> {
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
         match self.0.queue.pop() {
             Some(value) => Ok(value),
-            None if self.0.is_disconnected() => Err(TryRecvError::Disconnected),
+            None if self.0.is_disconnected() => {
+                self.0.queue.pop().ok_or(TryRecvError::Disconnected)
+            }
             None => Err(TryRecvError::Empty),
         }
     }
 
     pub async fn recv(&self) -> Result<T, RecvError> {
-        let poll = || match self.try_recv() {
-            Ok(value) => Poll::Ready(Ok(value)),
-            Err(TryRecvError::Disconnected) => Poll::Ready(Err(RecvError)),
-            Err(TryRecvError::Empty) => Poll::Pending,
-        };
-
-        self.0
-            .receivers
-            .block_on(poll, || self.0.queue.is_empty())
-            .await
+        queue::block_on!(self.0.receivers => {
+            poll: || match self.try_recv() {
+                Ok(value) => Poll::Ready(Ok(value)),
+                Err(TryRecvError::Disconnected) => Poll::Ready(Err(RecvError)),
+                Err(TryRecvError::Empty) => Poll::Pending,
+            },
+            should_park: || self.0.queue.is_empty()
+        })
     }
 
     pub fn recv_blocking(&self) -> Result<T, RecvError> {

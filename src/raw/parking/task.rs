@@ -1,11 +1,9 @@
 use crate::raw::util::UnsafeDeref;
 
 use std::cell::UnsafeCell;
-use std::hint;
 use std::sync::atomic::fence;
 use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
-use std::task::Context;
 use std::task::Poll;
 use std::task::Waker;
 
@@ -24,30 +22,34 @@ const WOKE: u8 = 0b001;
 const REGISTERING: u8 = 0b010;
 const WAKING: u8 = 0b100;
 
+/// Asynchronously 'block' until a resource is ready, parking the
+/// task if it is not.
+///
+// This is a macro for better inlining behavior (which seems
+// hit and miss with async fns)
+macro_rules! block_on {
+    ($task:expr => || $poll:expr) => {{
+        $crate::raw::util::poll_fn(|cx| loop {
+            if let Poll::Ready(value) = { $poll } {
+                return Poll::Ready(value);
+            }
+
+            match unsafe { $task.poll(cx.waker()) } {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(_) => ::std::hint::spin_loop(),
+            }
+        })
+        .await
+    }};
+}
+
+pub(crate) use block_on;
+
 impl Task {
     pub fn new() -> Task {
         Task {
             state: AtomicU8::new(WAITING),
             waker: UnsafeCell::new(None),
-        }
-    }
-
-    /// Asynchronously 'block' until a resource is ready, parking the
-    /// task if it is not.
-    #[inline]
-    pub fn block_on<T, F>(&self, cx: &mut Context<'_>, mut poll: F) -> Poll<T>
-    where
-        F: FnMut() -> Poll<T>,
-    {
-        loop {
-            if let Poll::Ready(value) = (poll)() {
-                return Poll::Ready(value);
-            }
-
-            match unsafe { self.poll(cx.waker()) } {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(_) => hint::spin_loop(),
-            }
         }
     }
 

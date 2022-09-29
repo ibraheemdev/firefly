@@ -1,4 +1,4 @@
-use crate::raw::blocking::block_on;
+use crate::raw::blocking;
 use crate::raw::intrusive::{List, Node};
 use crate::raw::util::UnsafeDeref;
 
@@ -30,30 +30,33 @@ struct Task {
     waker: UnsafeCell<Option<Waker>>,
 }
 
+/// Asynchronously 'block' until a resource is ready, parking the
+/// task if it is not.
+///
+// This is a macro for better inlining behavior (which seems
+// hit and miss with async fns)
+macro_rules! block_on {
+    ($queue:expr => { poll: || $poll:expr, should_park: || $should_park:expr }) => {{
+        loop {
+            match { $poll } {
+                Poll::Ready(value) => return value,
+                Poll::Pending => {
+                    std::hint::spin_loop();
+                    $queue.park(|| $should_park).await;
+                }
+            }
+        }
+    }};
+}
+
+pub(crate) use block_on;
+
 impl TaskQueue {
     /// Create a empty queue.
     pub fn new() -> Self {
         Self {
             pending: AtomicUsize::new(0),
             tasks: Mutex::new(List::new()),
-        }
-    }
-
-    /// Asynchronously 'block' until a resource is ready, parking the
-    /// task if it is not.
-    pub async fn block_on<T>(
-        &self,
-        mut poll: impl FnMut() -> Poll<T>,
-        mut should_park: impl FnMut() -> bool,
-    ) -> T {
-        loop {
-            match poll() {
-                Poll::Ready(value) => return value,
-                Poll::Pending => {
-                    std::hint::spin_loop();
-                    self.park(|| should_park()).await;
-                }
-            }
         }
     }
 
@@ -160,7 +163,7 @@ impl Drop for Park<'_, '_> {
             }
 
             self.task = Some(task);
-            unsafe { block_on(self) }
+            unsafe { blocking::block_on(self) }
         }
     }
 }

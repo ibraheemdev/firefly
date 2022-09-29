@@ -50,13 +50,11 @@ impl<T> Queue<T> {
     }
 
     pub fn pop(&self) -> Option<T> {
-        match self.elements.pop() {
-            Some(elem) => unsafe {
-                let value = self.slots.get_unchecked(elem).get().read().assume_init();
-                self.free.push(elem);
-                Some(value)
-            },
-            None => None,
+        let elem = self.elements.pop()?;
+        unsafe {
+            let value = self.slots.get_unchecked(elem).get().read().assume_init();
+            self.free.push(elem);
+            Some(value)
         }
     }
 
@@ -295,6 +293,7 @@ macro_rules! wrapping_cmp {
     }
 }
 
+// TODO(ibraheem): re-evaluate cache shifting, results seems inconsistent
 // macro_rules! cache_remap {
 //     ($i:expr, $order:expr, $n:expr) => {
 //         raw_cache_remap!($i, ($order) + 1, $n)
