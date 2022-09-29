@@ -11,7 +11,7 @@ fn bench_all(c: &mut Criterion) {
     let mut group = c.benchmark_group("mpsc/unbounded");
     group.sample_size(20);
 
-    // bench("firefly", &mut group, |_| firefly::mpsc::unbounded());
+    bench("firefly", &mut group, |_| firefly::mpsc::unbounded());
     bench("firefly-mpmc", &mut group, |_| firefly::mpmc::unbounded());
     bench("flume", &mut group, |_| flume::unbounded());
     bench("std::sync::mpsc", &mut group, |_| {
