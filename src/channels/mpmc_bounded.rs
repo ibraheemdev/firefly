@@ -63,7 +63,7 @@ impl<T> Sender<T> {
     }
 
     pub async fn send_inner(&self, state: &mut Option<T>) -> Result<(), SendError<T>> {
-        queue::block_on!(self.0.receivers => {
+        queue::block_on!(self.0.senders => {
             poll: || {
                 let value = state.take().unwrap();
                 match self.try_send(value) {

@@ -80,7 +80,6 @@ pub const MAX_CAPACITY: usize = u32::MAX as _;
 const SPIN_LIMIT: usize = 6;
 
 pub struct IndexQueue {
-    // The head and tail of the queue.
     head: CachePadded<AtomicUsize>,
     tail: CachePadded<AtomicUsize>,
     // Slots stores an index, a cycle, and a special 'safety' marker:

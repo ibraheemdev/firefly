@@ -99,15 +99,15 @@ mod atomic {
         }
 
         pub fn try_acquire(&self) -> bool {
-            let mut spin = 0;
+            let mut spun = 0_usize;
 
             loop {
                 if self.0.fetch_sub(1, Ordering::Acquire) > 0 {
                     return true;
                 }
 
-                spin += 1;
-                for _ in 0..(spin * spin) {
+                spun += 1;
+                for _ in 0..spun.pow(2) {
                     hint::spin_loop();
                 }
 
@@ -115,8 +115,8 @@ mod atomic {
                     return false;
                 }
 
-                spin += 1;
-                for _ in 0..(spin * spin) {
+                spun += 1;
+                for _ in 0..spun.pow(2) {
                     hint::spin_loop();
                 }
             }

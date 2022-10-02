@@ -10,19 +10,12 @@ static_assertions = "1.1.0"
 usync = "0.2.1"
 
 [dev-dependencies]
+criterion = { version = "0.4.0", features = ["html_reports"] }
 crossbeam = "0.8.1"
-criterion = "0.3.5"
 flume = "0.10.13"
 thingbuf = "0.1.3"
+dry = "0.1.1"
 
 [[bench]]
-name = "spmc"
-harness = false
-
-[[bench]]
-name = "mpsc"
-harness = false
-
-[[bench]]
-name = "spsc"
+name = "benches"
 harness = false
