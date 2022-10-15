@@ -1,3 +1,4 @@
+use super::signal::Signal;
 use crate::raw::blocking;
 use crate::raw::intrusive::{List, Node};
 use crate::raw::util::UnsafeDeref;
@@ -13,14 +14,11 @@ use usync::Mutex;
 
 /// A FIFO queue of parked tasks.
 pub struct TaskQueue {
-    pending: AtomicUsize,
+    // the number of pending tasks in/entering the queue
+    pending: Signal<AtomicUsize>,
+    // the queue of tasks
     tasks: Mutex<List<Task>>,
 }
-
-const EMPTY: u8 = 0;
-const WAITING: u8 = 1;
-const UPDATING: u8 = 2;
-const NOTIFIED: u8 = 3;
 
 /// A parked task.
 struct Task {
@@ -33,8 +31,7 @@ struct Task {
 /// Asynchronously 'block' until a resource is ready, parking the
 /// task if it is not.
 ///
-// This is a macro for better inlining behavior (which seems
-// hit and miss with async fns)
+// This is a macro for better inlining behavior (which seems hit and miss with async fns)
 macro_rules! block_on {
     ($queue:expr => { poll: || $poll:expr, should_park: || $should_park:expr }) => {{
         loop {
@@ -51,23 +48,28 @@ macro_rules! block_on {
 
 pub(crate) use block_on;
 
+const EMPTY: u8 = 0;
+const WAITING: u8 = 1;
+const UPDATING: u8 = 2;
+const NOTIFIED: u8 = 3;
+
 impl TaskQueue {
     /// Create a empty queue.
     pub fn new() -> Self {
         Self {
-            pending: AtomicUsize::new(0),
+            pending: Signal::new(0),
             tasks: Mutex::new(List::new()),
         }
     }
 
     /// Block the current task until it is unparked by another thread.
     pub async fn park(&self, should_park: impl FnOnce() -> bool) {
-        self.pending.fetch_add(1, Ordering::SeqCst);
+        self.pending.inner().fetch_add(1, Ordering::Acquire);
         let mut tasks = self.tasks.lock();
 
         if !should_park() {
             drop(tasks);
-            self.pending.fetch_sub(1, Ordering::Relaxed);
+            self.pending.inner().fetch_sub(1, Ordering::Relaxed);
             return;
         }
 
@@ -93,7 +95,9 @@ impl TaskQueue {
 
     /// Remove and unpark a single task from the queue.
     pub fn unpark_one(&self) {
-        if self.pending.load(Ordering::SeqCst) == 0 {
+        // if there are no pending tasks, the next task will acquire
+        // our updates when it increments the count and retry.
+        if self.pending.load_release() == 0 {
             return;
         }
 
@@ -102,14 +106,14 @@ impl TaskQueue {
             assert!(task.data.parked.replace(false));
             let task = &task.data as *const Task;
             drop(tasks);
-            self.pending.fetch_sub(1, Ordering::Relaxed);
+            self.pending.inner().fetch_sub(1, Ordering::Relaxed);
             unsafe { task.deref().unpark() }
         }
     }
 
     /// Remove and unpark all tasks in the queue.
     pub fn unpark_all(&self) {
-        if self.pending.load(Ordering::SeqCst) == 0 {
+        if self.pending.load_release() == 0 {
             return;
         }
 
@@ -122,7 +126,7 @@ impl TaskQueue {
         });
 
         if woke > 0 {
-            self.pending.fetch_sub(woke, Ordering::Relaxed);
+            self.pending.inner().fetch_sub(woke, Ordering::Relaxed);
         }
     }
 }
@@ -157,7 +161,7 @@ impl Drop for Park<'_, '_> {
                 let mut lock = self.parker.tasks.lock();
                 if task.as_ref().data.parked.replace(false) {
                     assert!(lock.remove(task.as_mut()));
-                    self.parker.pending.fetch_sub(1, Ordering::Relaxed);
+                    self.parker.pending.inner().fetch_sub(1, Ordering::Relaxed);
                     return;
                 }
             }
@@ -168,6 +172,7 @@ impl Drop for Park<'_, '_> {
     }
 }
 
+// A simpler implementation of `super::Task` that can only be woken once.
 impl Task {
     fn poll(&self, waker: &Waker) -> Poll<()> {
         let state = self.state.load(Ordering::Acquire);

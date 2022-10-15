@@ -1,3 +1,4 @@
+use crate::raw::parking;
 use crate::raw::util::CachePadded;
 
 use std::cell::{Cell, UnsafeCell};
@@ -45,7 +46,7 @@ impl<T> Queue<T> {
         unsafe {
             let slot = self.slots.get_unchecked(index);
             slot.value.get().write(MaybeUninit::new(value));
-            slot.stored.store(true, Ordering::SeqCst);
+            slot.stored.store(true, parking::RELEASE);
         }
 
         Ok(())
@@ -88,6 +89,8 @@ impl<T> Drop for Queue<T> {
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod atomic {
+    use super::*;
+
     use std::hint;
     use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 
@@ -127,7 +130,7 @@ mod atomic {
         }
 
         pub fn release(&self) {
-            self.0.fetch_add(1, Ordering::Release);
+            self.0.fetch_add(1, parking::RELEASE);
         }
     }
 
@@ -147,6 +150,8 @@ mod atomic {
 
 #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
 mod atomic {
+    use super::*;
+
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     pub struct Semaphore(AtomicUsize);
@@ -161,7 +166,7 @@ mod atomic {
         }
 
         pub fn release(&self) {
-            let _ = fetch_update(&self.0, Ordering::Release, |v| Some(v + 1)).unwrap();
+            let _ = fetch_update(&self.0, parking::RELEASE, |v| Some(v + 1)).unwrap();
         }
     }
 

@@ -1,3 +1,4 @@
+use crate::raw::parking;
 use crate::raw::util::CachePadded;
 
 use std::cell::{Cell, UnsafeCell};
@@ -73,7 +74,7 @@ impl Handle {
             .get()
             .write(MaybeUninit::new(value));
 
-        queue.tail.store(next_tail, Ordering::SeqCst);
+        queue.tail.store(next_tail, parking::RELEASE);
         self.tail.set(next_tail);
 
         Ok(())
@@ -94,7 +95,7 @@ impl Handle {
         let value = queue.slots.get_unchecked(head).get().read().assume_init();
 
         let head = queue.next(head);
-        queue.head.store(head, Ordering::Release);
+        queue.head.store(head, parking::RELEASE);
         self.head.set(head);
 
         Some(value)

@@ -1,4 +1,5 @@
-use crate::raw::util::{self, CachePadded, FetchAddPtr, StrictProvenance, UnsafeDeref};
+use crate::raw::parking;
+use crate::raw::util::{self, *};
 
 use std::cell::UnsafeCell;
 use std::mem::{ManuallyDrop, MaybeUninit};
@@ -163,7 +164,7 @@ impl<T> Queue<T> {
                         .as_mut_ptr()
                         .copy_from_nonoverlapping(&*value, 1);
 
-                    match slot.state.fetch_add(WRITTEN, Ordering::SeqCst) {
+                    match slot.state.fetch_add(WRITTEN, parking::RELEASE) {
                         UNINIT | RESUME => return,
                         WRITER_RESUME => Block::try_reclaim(tail, index + 1),
                         _ => {}
@@ -193,7 +194,7 @@ impl<T> Queue<T> {
                     let (res, next) = match tail.deref().next.compare_exchange(
                         ptr::null_mut(),
                         block_alloc,
-                        Ordering::SeqCst,
+                        parking::RELEASE,
                         Ordering::Relaxed,
                     ) {
                         Ok(_) => (Ok(()), block_alloc),

@@ -1,3 +1,4 @@
+use crate::raw::parking;
 use crate::raw::util::CachePadded;
 
 use std::cell::UnsafeCell;
@@ -155,7 +156,7 @@ impl IndexQueue {
                     let index = tail_cycle ^ index ^ (slots - 1);
 
                     if let Err(found) = unsafe { self.slots.get_unchecked(tail_index) }
-                        .compare_exchange_weak(slot, index, Ordering::AcqRel, Ordering::Acquire)
+                        .compare_exchange_weak(slot, index, parking::RELEASE, Ordering::Acquire)
                     {
                         slot = found;
                         continue 'retry;
@@ -192,7 +193,7 @@ impl IndexQueue {
                         unsafe {
                             self.slots
                                 .get_unchecked(head_index)
-                                .fetch_or(slots - 1, Ordering::AcqRel);
+                                .fetch_or(slots - 1, parking::RELEASE);
                         }
                         return Some(slot & (slots - 1));
                     }

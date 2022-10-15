@@ -1,16 +1,15 @@
+use super::signal::Signal;
 use crate::raw::util::UnsafeDeref;
 
 use std::cell::UnsafeCell;
-use std::sync::atomic::fence;
-use std::sync::atomic::AtomicU8;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{fence, AtomicU8, Ordering};
 use std::task::Poll;
 use std::task::Waker;
 
 /// An asynchronous task that can be parked/unparked.
 #[derive(Default)]
 pub struct Task {
-    state: AtomicU8,
+    state: Signal<AtomicU8>,
     waker: UnsafeCell<Option<Waker>>,
 }
 
@@ -53,7 +52,7 @@ impl Task {
     /// Create a new `Task`.
     pub fn new() -> Task {
         Task {
-            state: AtomicU8::new(PARKED),
+            state: Signal::new(PARKED),
             waker: UnsafeCell::new(None),
         }
     }
@@ -70,7 +69,8 @@ impl Task {
     ///
     /// This method must only be called from a single thread.
     pub unsafe fn register(&self, waker: &Waker) -> Poll<()> {
-        let mut state = self.state.load(Ordering::Relaxed);
+        // acquire: synchronize with the unpark token
+        let mut state = self.state.load_acquire();
 
         // if the unpark token is not set, we have to register the waker
         if state == PARKED {
@@ -88,18 +88,18 @@ impl Task {
             }
 
             // try to acquire the registration lock
-            match self.state.compare_exchange(
+            match self.state.inner().compare_exchange(
                 state,
                 state | REGISTERING,
                 Ordering::Acquire,
-                Ordering::Relaxed,
+                Ordering::Acquire,
             ) {
                 Ok(_) => {
                     // safety: we hold the lock
                     *self.waker.get() = Some(waker.clone());
 
                     // release the lock
-                    let current = self.state.swap(PARKED, Ordering::Release);
+                    let current = self.state.inner().swap(PARKED, Ordering::Release);
 
                     match current {
                         // if nothing happened in the meantime, we succesfully
@@ -129,13 +129,13 @@ impl Task {
         // the old task, try to eagerly consume the token and return
         // ready
         if state == (WAKING | UNPARKED) {
-            match self.state.compare_exchange(
+            match self.state.inner().compare_exchange(
                 state,
                 // we must retaing the WAKING flag for safety
                 // of future registrations
                 state - UNPARKED,
                 Ordering::Acquire,
-                Ordering::Relaxed,
+                Ordering::Acquire,
             ) {
                 Ok(_) => return Poll::Ready(()),
                 Err(found) => {
@@ -149,12 +149,10 @@ impl Task {
         // if the unpark token is set but the waker is *not* being
         // woken, we can just consume the token and return ready
         if state == UNPARKED {
-            // synchronize with the unpark token
-            fence(Ordering::Acquire);
             // we can safetly reset the state here because:
             // - we are the only consumer
             // - any producers will see UNPARKED and leave the state as is
-            self.state.store(PARKED, Ordering::Relaxed);
+            self.state.inner().store(PARKED, Ordering::Relaxed);
             return Poll::Ready(());
         }
 
@@ -174,16 +172,12 @@ impl Task {
     /// This method will set a token that can be consumed by calls to [`register`],
     /// and wake the current registered waker.
     pub fn unpark(&self) {
-        let mut state = self.state.load(Ordering::SeqCst);
+        let mut state = self.state.load_release();
 
         loop {
             // the unpark token is already set, we're done. the future consumer
-            // will also see the token and retry. however, we still need to ensure
-            // that our release operation (push to the queue) is not lost and acquired
-            // by the consumer, which is why the load of the state above is SeqCst to create
-            // a store-load fence with the SeqCst store (push). while under the C++ memory
-            // model this technically is not enough, practically this works and produces
-            // better codegen than a 'release load' (fetch_add 0).
+            // will also see the token and retry. the release ordering also
+            // ensures that our push is not lost.
             if state & UNPARKED != 0 {
                 return;
             }
@@ -198,10 +192,12 @@ impl Task {
                 new |= WAKING
             }
 
-            match self
-                .state
-                .compare_exchange_weak(state, new, Ordering::Release, Ordering::Relaxed)
-            {
+            match self.state.inner().compare_exchange_weak(
+                state,
+                new,
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
                 // set the token and acquired the lock, now we have to wake
                 Ok(PARKED) => {
                     // acquire REGISTERING
@@ -211,7 +207,7 @@ impl Task {
                     let waker = unsafe { self.waker.get().deref().clone() };
 
                     // release the lock
-                    self.state.fetch_sub(WAKING, Ordering::Release);
+                    self.state.inner().fetch_sub(WAKING, Ordering::Release);
 
                     if let Some(waker) = waker {
                         waker.wake();

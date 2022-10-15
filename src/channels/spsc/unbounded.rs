@@ -1,3 +1,4 @@
+use crate::raw::parking;
 use crate::raw::util::{self, CachePadded, UnsafeDeref};
 
 use std::cell::{Cell, UnsafeCell};
@@ -44,9 +45,9 @@ impl<T> Queue<T> {
 
             if block.is_null() {
                 block = new_block;
-                self.head.block.store(new_block, Ordering::Release);
+                self.head.block.store(new_block, parking::RELEASE);
             } else {
-                block.deref().next.store(new_block, Ordering::Release);
+                block.deref().next.store(new_block, parking::RELEASE);
             }
 
             self.tail.block.set(new_block);
@@ -115,7 +116,7 @@ struct Slot<T> {
 impl<T> Slot<T> {
     unsafe fn store(&self, value: T) {
         self.value.get().write(MaybeUninit::new(value));
-        self.active.store(true, Ordering::SeqCst);
+        self.active.store(true, parking::RELEASE);
     }
 
     unsafe fn load(&self) -> Option<T> {
