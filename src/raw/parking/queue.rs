@@ -1,7 +1,7 @@
 use super::signal::Signal;
 use crate::raw::blocking;
 use crate::raw::intrusive::{List, Node};
-use crate::raw::util::UnsafeDeref;
+use crate::raw::util::{UnsafeDeref, UnsafeSend};
 
 use std::cell::{Cell, UnsafeCell};
 use std::future::Future;
@@ -19,6 +19,9 @@ pub struct TaskQueue {
     // the queue of tasks
     tasks: Mutex<List<Task>>,
 }
+
+unsafe impl Send for TaskQueue {}
+unsafe impl Sync for TaskQueue {}
 
 /// A parked task.
 struct Task {
@@ -63,34 +66,39 @@ impl TaskQueue {
     }
 
     /// Block the current task until it is unparked by another thread.
-    pub async fn park(&self, should_park: impl FnOnce() -> bool) {
-        self.pending.inner().fetch_add(1, Ordering::Acquire);
-        let mut tasks = self.tasks.lock();
+    pub fn park<'a>(
+        &'a self,
+        should_park: impl FnOnce() -> bool + 'a,
+    ) -> impl Future<Output = ()> + 'a {
+        UnsafeSend(async move {
+            self.pending.inner().fetch_add(1, Ordering::Acquire);
+            let mut tasks = self.tasks.lock();
 
-        if !should_park() {
-            drop(tasks);
-            self.pending.inner().fetch_sub(1, Ordering::Relaxed);
-            return;
-        }
-
-        unsafe {
-            let mut task = Node::new(Task {
-                parked: Cell::new(true),
-                state: AtomicU8::new(EMPTY),
-                waker: Default::default(),
-            });
-
-            let mut task = Pin::new_unchecked(&mut task);
-            tasks.push(task.as_mut());
-
-            drop(tasks);
-
-            Park {
-                parker: self,
-                task: Some(task),
+            if !should_park() {
+                drop(tasks);
+                self.pending.inner().fetch_sub(1, Ordering::Relaxed);
+                return;
             }
-            .await;
-        }
+
+            unsafe {
+                let mut task = Node::new(Task {
+                    parked: Cell::new(true),
+                    state: AtomicU8::new(EMPTY),
+                    waker: Default::default(),
+                });
+
+                let mut task = Pin::new_unchecked(&mut task);
+                tasks.push(task.as_mut());
+
+                drop(tasks);
+
+                Park {
+                    parker: self,
+                    task: Some(task),
+                }
+                .await;
+            }
+        })
     }
 
     /// Remove and unpark a single task from the queue.

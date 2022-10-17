@@ -4,6 +4,29 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::task::{Context, Poll};
 
+pub struct UnsafeSend<T>(pub T);
+
+unsafe impl<T> Send for UnsafeSend<T> {}
+
+impl<T: Future> Future for UnsafeSend<T> {
+    type Output = T::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // safety: pin projection
+        unsafe { self.map_unchecked_mut(|x| &mut x.0).poll(cx) }
+    }
+}
+
+pub fn assert_valid_capacity(capacity: usize) {
+    if capacity == 0 {
+        panic!("`capacity` cannot be zero")
+    }
+
+    if capacity & (capacity - 1) != 0 {
+        panic!("`capacity` must be a power of two");
+    }
+}
+
 /// Allocates a box with zeroed memory.
 ///
 /// # Safety

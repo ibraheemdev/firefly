@@ -1,6 +1,43 @@
+//! Multi-producer single-consumer channels.
+//!
+//! The `Sender` half of a MPSC channel can be cloned and shared across multiple tasks.
+//! These channels are useful when following a *fan-in* pattern, where multiple tasks
+//! send data to a single worker.
+//!
+//! See the [crate documentation](crate) for details about channel usage in general.
+//!
+//! # Examples
+//!
+//! ```
+//! # use tokio::task;
+//! use firefly::mpsc;
+//!
+//! # #[tokio::main] async fn main() {
+//! // create a bounded channel
+//! let (tx, mut rx) = mpsc::bounded(4);
+//!
+//! // spawn 4 tasks, each sending a single message
+//! for i in 0..4 {
+//!     let tx = tx.clone();
+//!     task::spawn(async move {
+//!         tx.send(i).await.unwrap();
+//!     });
+//! }
+//!
+//! // drop the last sender to stop `rx` from waiting for a message
+//! drop(tx);
+//!
+//! // wait for each message to be sent
+//! while let Ok(i) = rx.recv().await {
+//!     println!("{i}");
+//! }
+//! # }
+//! ```
+
 mod bounded;
 mod unbounded;
 
+use crate::docs::docs;
 use crate::error::*;
 use crate::raw::parking::queue::{self, TaskQueue};
 use crate::raw::parking::task::{self, Task};
@@ -9,7 +46,7 @@ use crate::raw::{blocking, rc};
 use std::task::Poll;
 use std::time::Duration;
 
-pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
+docs!([mpsc] pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
     let (tx, rx) = rc::alloc(Channel {
         queue: bounded::Queue::new(capacity),
         receiver: Task::new(),
@@ -17,7 +54,7 @@ pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
     });
 
     (Sender(tx), Receiver(rx))
-}
+});
 
 struct Channel<T> {
     queue: bounded::Queue<T>,
@@ -25,13 +62,16 @@ struct Channel<T> {
     senders: TaskQueue,
 }
 
+/// The sending half of an MPSC channel.
+///
+/// This type can be cloned and shared across multiple tasks.
 pub struct Sender<T>(rc::Sender<Channel<T>>);
 
 unsafe impl<T: Send> Send for Sender<T> {}
 unsafe impl<T: Send> Sync for Sender<T> {}
 
 impl<T> Sender<T> {
-    pub fn try_send(&self, value: T) -> Result<(), TrySendError<T>> {
+    docs!([mpsc] pub fn try_send(&self, value: T) -> Result<(), TrySendError<T>> {
         if self.0.is_disconnected() {
             return Err(TrySendError::Disconnected(value));
         }
@@ -41,18 +81,18 @@ impl<T> Sender<T> {
             .push(value)
             .map(|_| self.0.receiver.unpark())
             .map_err(TrySendError::Full)
-    }
+    });
 
-    pub async fn send(&self, value: T) -> Result<(), SendError<T>> {
+    docs!([mpsc] pub async fn send(&self, value: T) -> Result<(), SendError<T>> {
         let mut state = Some(value);
         self.send_inner(&mut state).await
-    }
+    });
 
-    pub fn send_blocking(&self, value: T) -> Result<(), SendError<T>> {
+    docs!([mpsc] pub fn send_blocking(&self, value: T) -> Result<(), SendError<T>> {
         unsafe { blocking::block_on(self.send(value)) }
-    }
+    });
 
-    pub fn send_blocking_timeout(
+    docs!([mpsc] pub fn send_blocking_timeout(
         &self,
         value: T,
         timeout: Duration,
@@ -63,9 +103,9 @@ impl<T> Sender<T> {
             Some(value) => value.map_err(SendError::into),
             None => Err(SendTimeoutError::Timeout(state.take().unwrap())),
         }
-    }
+    });
 
-    pub async fn send_inner(&self, state: &mut Option<T>) -> Result<(), SendError<T>> {
+    async fn send_inner(&self, state: &mut Option<T>) -> Result<(), SendError<T>> {
         queue::block_on!(self.0.senders => {
             poll: || {
                 let value = state.take().unwrap();
@@ -83,12 +123,14 @@ impl<T> Sender<T> {
     }
 }
 
+/// The receiving half of an MPSC channel.
 pub struct Receiver<T>(rc::Receiver<Channel<T>, 1>);
 
 unsafe impl<T: Send> Send for Receiver<T> {}
+unsafe impl<T: Send> Sync for Receiver<T> {}
 
 impl<T> Receiver<T> {
-    pub fn try_recv(&self) -> Result<T, TryRecvError> {
+    docs!([mpsc::bounded] pub fn try_recv(&mut self) -> Result<T, TryRecvError> {
         match unsafe { self.0.queue.pop() } {
             Some(value) => {
                 self.0.senders.unpark_one();
@@ -103,30 +145,26 @@ impl<T> Receiver<T> {
             },
             None => Err(TryRecvError::Empty),
         }
-    }
+    });
 
-    pub async fn recv(&self) -> Result<T, RecvError> {
+    docs!([mpsc::bounded] pub async fn recv(&mut self) -> Result<T, RecvError> {
         task::block_on!(self.0.receiver => || match self.try_recv() {
             Ok(value) => return Poll::Ready(Ok(value)),
             Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
             Err(TryRecvError::Empty) => Poll::Pending,
         })
-    }
+    });
 
-    pub fn recv_blocking(&self) -> Result<T, RecvError> {
+    docs!([mpsc::bounded] pub fn recv_blocking(&mut self) -> Result<T, RecvError> {
         unsafe { blocking::block_on(self.recv()) }
-    }
+    });
 
-    pub fn recv_blocking_timeout(&self, timeout: Duration) -> Result<T, RecvTimeoutError> {
+    docs!([mpsc::bounded] pub fn recv_blocking_timeout(&mut self, timeout: Duration) -> Result<T, RecvTimeoutError> {
         match unsafe { blocking::block_on_timeout(self.recv(), timeout) } {
             Some(value) => value.map_err(RecvError::into),
             None => Err(RecvTimeoutError::Timeout),
         }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        unsafe { self.0.queue.is_empty() }
-    }
+    });
 }
 
 impl<T> Clone for Sender<T> {
@@ -147,27 +185,30 @@ impl<T> Drop for Receiver<T> {
     }
 }
 
-pub fn unbounded<T>() -> (UnboundedSender<T>, UnboundedReceiver<T>) {
+docs!([mpsc] pub fn unbounded<T>() -> (UnboundedSender<T>, UnboundedReceiver<T>) {
     let (tx, rx) = rc::alloc(UnboundedChannel {
         queue: unbounded::Queue::new(),
         receiver: Task::new(),
     });
 
     (UnboundedSender(tx), UnboundedReceiver(rx))
-}
+});
 
 struct UnboundedChannel<T> {
     queue: unbounded::Queue<T>,
     receiver: Task,
 }
 
+/// The sending half of an unbounded MPSC channel.
+///
+/// This type can be cloned and shared across multiple tasks.
 pub struct UnboundedSender<T>(rc::Sender<UnboundedChannel<T>, { unbounded::MAX_SENDERS }>);
 
 unsafe impl<T: Send> Send for UnboundedSender<T> {}
 unsafe impl<T: Send> Sync for UnboundedSender<T> {}
 
 impl<T> UnboundedSender<T> {
-    pub fn send(&self, value: T) -> Result<(), SendError<T>> {
+    docs!([mpsc] pub fn send(&self, value: T) -> Result<(), SendError<T>> {
         if self.0.is_disconnected() {
             return Err(SendError(value));
         }
@@ -175,15 +216,17 @@ impl<T> UnboundedSender<T> {
         self.0.queue.push(value);
         self.0.receiver.unpark();
         Ok(())
-    }
+    });
 }
 
+/// The receiving half of an unbounded MPSC channel.
 pub struct UnboundedReceiver<T>(rc::Receiver<UnboundedChannel<T>, 1>);
 
 unsafe impl<T: Send> Send for UnboundedReceiver<T> {}
+unsafe impl<T: Send> Sync for UnboundedReceiver<T> {}
 
 impl<T> UnboundedReceiver<T> {
-    pub fn try_recv(&self) -> Result<T, TryRecvError> {
+    docs!([mpsc::unbounded] pub fn try_recv(&mut self) -> Result<T, TryRecvError> {
         match unsafe { self.0.queue.pop() } {
             Some(value) => Ok(value),
             None if self.0.is_disconnected() => {
@@ -191,31 +234,26 @@ impl<T> UnboundedReceiver<T> {
             }
             None => Err(TryRecvError::Empty),
         }
-    }
+    });
 
-    #[inline(always)]
-    pub async fn recv(&self) -> Result<T, RecvError> {
+    docs!([mpsc::unbounded] pub async fn recv(&mut self) -> Result<T, RecvError> {
         task::block_on!(self.0.receiver => || match self.try_recv() {
             Ok(value) => return Poll::Ready(Ok(value)),
             Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
             Err(TryRecvError::Empty) => Poll::Pending,
         })
-    }
+    });
 
-    pub fn recv_blocking(&self) -> Result<T, RecvError> {
+    docs!([mpsc::unbounded] pub fn recv_blocking(&mut self) -> Result<T, RecvError> {
         unsafe { blocking::block_on(self.recv()) }
-    }
+    });
 
-    pub fn recv_blocking_timeout(&self, timeout: Duration) -> Result<T, RecvTimeoutError> {
+    docs!([mpsc::unbounded] pub fn recv_blocking_timeout(&mut self, timeout: Duration) -> Result<T, RecvTimeoutError> {
         match unsafe { blocking::block_on_timeout(self.recv(), timeout) } {
             Some(value) => value.map_err(RecvError::into),
             None => Err(RecvTimeoutError::Timeout),
         }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        unsafe { self.0.queue.is_empty() }
-    }
+    });
 }
 
 impl<T> Clone for UnboundedSender<T> {

@@ -1,5 +1,5 @@
 use crate::raw::parking;
-use crate::raw::util::CachePadded;
+use crate::raw::util::{assert_valid_capacity, CachePadded};
 
 use std::cell::{Cell, UnsafeCell};
 use std::mem::{drop, MaybeUninit};
@@ -21,7 +21,8 @@ unsafe impl<T: Send> Send for Queue<T> {}
 
 impl<T> Queue<T> {
     pub fn new(capacity: usize) -> Self {
-        let capacity = capacity.next_power_of_two();
+        assert_valid_capacity(capacity);
+
         Self {
             sema: CachePadded(atomic::Semaphore::new(capacity)),
             tail: CachePadded(atomic::Counter::default()),

@@ -3,15 +3,15 @@
 A collection of high performance concurrent channels.
 
 ```rust
-// create an unbounded channel
-let (tx, rx) = firefly::mpsc::unbounded();
+// create a SPSC channel with a capacity of 2
+let (mut tx, mut rx) = firefly::spsc::bounded(2);
 
-thread::spawn(move || {
-    // send a message across
-    tx.send(42).unwrap();
+task::spawn(async move {
+    // send a message across asynchronously
+    tx.send(42).await.unwrap();
 });
 
-// receive the message
+// receive the message synchronously
 assert_eq!(rx.recv_blocking().unwrap(), 42);
 ```
 
@@ -19,14 +19,14 @@ assert_eq!(rx.recv_blocking().unwrap(), 42);
 
 Firefly provides a variety of channel flavors, optimized for specific use cases:
 
-- [`spsc::bounded`]
-- [`spsc::unbounded`]
-- [`mpsc::bounded`]
-- [`mpsc::unbounded`]
-- [`mpmc::bounded`]
-- [`mpmc::unbounded`]
+- [`spsc::bounded`](https://docs.rs/firefly/latest/firefly/spsc/fn.bounded.html)
+- [`spsc::unbounded`](https://docs.rs/firefly/latest/firefly/spsc/fn.unbounded.html)
+- [`mpsc::bounded`](https://docs.rs/firefly/latest/firefly/mpsc/fn.bounded.html)
+- [`mpsc::unbounded`](https://docs.rs/firefly/latest/firefly/mpsc/fn.unbounded.html)
+- [`mpmc::bounded`](https://docs.rs/firefly/latest/firefly/mpmc/fn.bounded.html)
+- [`mpmc::unbounded`](https://docs.rs/firefly/latest/firefly/mpmc/fn.unbounded.html)
 
-In general a channel flavor higher up on the list is likely to be more performant
+In general, a channel flavor higher up on the list is likely to be more performant
 than a more generic one lower down.
 
 ---
@@ -35,19 +35,18 @@ Bounded channels are created with a bounded capacity; the maximum number of mess
 that can be held at a given time:
 
 ```rust
-// create a channel that can hold at most 10 messages at a time
-let (tx, rx) = firefly::mpsc::bounded(10);
+// create a channel that can hold at most 8 messages at a time
+let (mut tx, mut rx) = firefly::spsc::bounded(8);
 
-thread::spawn(move || {
+task::spawn(async move {
     for i in 0..100 {
-        // send a message, potentially blocking until capacity frees up
-        tx.send_blocking(i).unwrap();
+        // send a message, potentially waiting until capacity frees up
+        tx.send(i).await.unwrap();
     }
 });
 
-for _ in 0..100 {
-    // wait for a message to be sent
-    let i = rx.recv_blocking().unwrap();
+// block until messages are sent
+while let Ok(i) = rx.recv_blocking() {
     println!("{i}");
 }
 ```
@@ -57,18 +56,17 @@ sending never blocks:
 
 ```rust
 // create an unbounded channel
-let (tx, rx) = firefly::mpsc::unbounded();
+let (mut tx, mut rx) = firefly::spsc::unbounded();
 
-thread::spawn(move || {
-    // send an infinite amount of messages
-    for i in 0.. {
+task::spawn(async move {
+    // send an arbitrary amount of messages
+    for i in 0..10_000 {
         tx.send(i).unwrap();
     }
 });
 
-// receive an infinite amount of messages
-loop {
-    let i = rx.recv_blocking().unwrap();
+// block until all messages are sent
+while let Ok(i) = rx.recv_blocking() {
     println!("{i}");
 }
 ```
@@ -78,60 +76,56 @@ loop {
 Send and receive operations can be performed four different ways:
 
 - Non-blocking (returns immediately with success or failure).
+- Asynchronously (blocks the async task).
 - Blocking (blocks the thread until the operation succeeds or the channel disconnects).
 - Blocking with a timeout (blocks upto a maximum duration of time).
-- Asynchronously (blocks the async task).
 
 ```rust
-use std::time::Duration;
-
-let (tx, rx) = firefly::mpsc::bounded(4);
+let (mut tx, mut rx) = firefly::spsc::bounded(4);
 
 thread::spawn(move || {
     for _ in 0..3 {
-        // this can never fail because we only ever send
-        // 3 messages, and the capacity is 4
+        // this can never fail because we never exceed the capacity
         tx.try_send(42).unwrap();
     }
 });
 
-// receive the message or return an error if not immediately ready
+// attempt to receive the message without blocking
 match rx.try_recv() {
     Ok(x) => assert_eq!(x, 42),
     Err(_) => println!("message has not been sent yet")
 }
 
-// block the thread until the message is sent
-assert_eq!(rx.recv_blocking().unwrap(), 42);
+// block until the message is sent
+assert_eq!(rx.recv_blocking(), Ok(42));
 
-// block the thread upto 100ms
-match rx.recv_timeout(Duration::from_millis(100)) {
+// block for at most 1 second
+match rx.recv_blocking_timeout(Duration::from_secs(1)) {
     Ok(x) => assert_eq!(x, 42),
     Err(_) => println!("message took too long to send")
 }
 
-tokio::spawn(async move {
-    // block the async task until the message is sent
-    assert_eq!(rx.recv().await.unwrap(), 42);
+// spawn a task that receives the message asynchronously
+task::spawn(async move {
+    assert_eq!(rx.recv().await, Ok(42));
 });
 ```
 
-Channels can also be used as "bridge" channels between async and sync code:
+All channels can be used to "bridge" between async and sync code:
 
 ```rust
-let (tx, rx) = firefly::mpsc::bounded(10);
+let (mut tx, mut rx) = firefly::spsc::bounded(8);
 
+// send messages synchronously
 thread::spawn(move || {
-    // send messages synchronously
-    for i in 0.. {
+    for i in 0..16 {
         tx.send_blocking(i).unwrap()
     }
 });
 
-tokio::spawn(async move {
-    // receive asynchronously
-    loop {
-        let i = rx.recv().await.unwrap();
+// receive asynchronously
+task::spawn(async move {
+    while let Ok(i) = rx.recv().await {
         println!("{i}");
     }
 });
@@ -145,17 +139,18 @@ in the channel can be received, but subsequent attempts to receive will also
 fail:
 
 ```rust
-let (tx, rx) = firefly::mpsc::unbounded();
+let (mut tx, mut rx) = firefly::spsc::unbounded();
+
 tx.send(1).unwrap();
 tx.send(2).unwrap();
 
-// drop the sender
+// disconnect the sender
 drop(tx);
 
 // any remaining messages can be received
-assert_eq!(r.recv(), Ok(1));
-assert_eq!(r.recv(), Ok(2));
+assert_eq!(rx.recv().await, Ok(1));
+assert_eq!(rx.recv().await, Ok(2));
 
 // subsequent attempts will error
-assert_eq!(r.recv(), Err(RecvError));
+assert_eq!(rx.recv().await, Err(firefly::RecvError));
 ```

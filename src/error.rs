@@ -92,10 +92,12 @@ impl<T> SendError<T> {
     ///
     /// ```
     /// let (tx, rx) = firefly::mpsc::unbounded();
+    ///
+    /// // disconnect the receiver
     /// drop(rx);
     ///
-    /// if let Err(err) = tx.send("foo") {
-    ///     assert_eq!(err.into_inner(), "foo");
+    /// if let Err(err) = tx.send(1) {
+    ///     assert_eq!(err.into_inner(), 1);
     /// }
     /// ```
     pub fn into_inner(self) -> T {
@@ -137,10 +139,13 @@ impl<T> TrySendError<T> {
     /// # Examples
     ///
     /// ```
-    /// let (tx, rx) = firefly::mpsc::bounded(0);
+    /// let (tx, rx) = firefly::mpsc::bounded(2);
     ///
-    /// if let Err(err) = s.try_send("foo") {
-    ///     assert_eq!(err.into_inner(), "foo");
+    /// tx.try_send(1).unwrap();
+    /// tx.try_send(2).unwrap();
+    ///
+    /// if let Err(err) = tx.try_send(3) {
+    ///     assert_eq!(err.into_inner(), 3);
     /// }
     /// ```
     pub fn into_inner(self) -> T {
@@ -194,9 +199,13 @@ impl<T> SendTimeoutError<T> {
     /// ```
     /// use std::time::Duration;
     ///
-    /// let (tx, rx) = firefly::mpsc::unbounded();
-    /// if let Err(err) = s.send_blocking_timeout("foo", Duration::from_secs(1)) {
-    ///     assert_eq!(err.into_inner(), "foo");
+    /// let (tx, rx) = firefly::mpsc::bounded(2);
+    ///
+    /// tx.try_send(1).unwrap();
+    /// tx.try_send(2).unwrap();
+    ///
+    /// if let Err(err) = tx.send_blocking_timeout(3, Duration::from_secs(1)) {
+    ///     assert_eq!(err.into_inner(), 3);
     /// }
     /// ```
     pub fn into_inner(self) -> T {

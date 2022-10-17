@@ -1,5 +1,5 @@
 use crate::raw::parking;
-use crate::raw::util::CachePadded;
+use crate::raw::util::{assert_valid_capacity, CachePadded};
 
 use std::cell::UnsafeCell;
 use std::mem::MaybeUninit;
@@ -18,11 +18,7 @@ unsafe impl<T: Send> Sync for Queue<T> {}
 
 impl<T> Queue<T> {
     pub fn new(capacity: usize) -> Self {
-        if capacity == 0 {
-            panic!("capacity must be non-zero");
-        }
-
-        let capacity = capacity.next_power_of_two();
+        assert_valid_capacity(capacity);
         if capacity >= MAX_CAPACITY {
             panic!("exceeded maximum queue capacity of {}", MAX_CAPACITY);
         }

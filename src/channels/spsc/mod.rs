@@ -1,6 +1,36 @@
+//! Single-producer single-consumer channels.
+//!
+//! These channels are useful when communicating across two separate tasks. See the
+//! [crate documentation](crate) for details about channel usage in general.
+//!
+//! # Examples
+//!
+//! ```
+//! # use tokio::task;
+//! use firefly::spsc;
+//!
+//! # #[tokio::main] async fn main() {
+//! // create a bounded channel
+//! let (mut tx, mut rx) = spsc::bounded(4);
+//!
+//! // spawn a sender task
+//! task::spawn(async move {
+//!     for i in 0..16 {
+//!         tx.send(i).await.unwrap();
+//!     }
+//! });
+//!
+//! // wait for each message to be sent
+//! while let Ok(i) = rx.recv().await {
+//!     println!("{i}");
+//! }
+//! # }
+//! ```
+
 mod bounded;
 mod unbounded;
 
+use crate::docs::docs;
 use crate::error::*;
 use crate::raw::parking::task::{self, Task};
 use crate::raw::{blocking, rc};
@@ -8,7 +38,7 @@ use crate::raw::{blocking, rc};
 use std::task::Poll;
 use std::time::Duration;
 
-pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
+docs!([spsc] pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
     let (tx, rx) = rc::alloc(Channel {
         queue: bounded::Queue::new(capacity),
         receiver: Task::new(),
@@ -26,7 +56,7 @@ pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
     };
 
     (sender, receiver)
-}
+});
 
 struct Channel<T> {
     queue: bounded::Queue<T>,
@@ -34,15 +64,17 @@ struct Channel<T> {
     sender: Task,
 }
 
+/// The sending half of an SPSC channel.
 pub struct Sender<T> {
     chan: rc::Sender<Channel<T>, 1>,
     handle: bounded::Handle,
 }
 
 unsafe impl<T: Send> Send for Sender<T> {}
+unsafe impl<T: Send> Sync for Sender<T> {}
 
 impl<T> Sender<T> {
-    pub fn try_send(&self, value: T) -> Result<(), TrySendError<T>> {
+    docs!([spsc] pub fn try_send(&mut self, value: T) -> Result<(), TrySendError<T>> {
         if self.chan.is_disconnected() {
             return Err(TrySendError::Disconnected(value));
         }
@@ -50,19 +82,19 @@ impl<T> Sender<T> {
         unsafe { self.handle.push(value, &self.chan.queue) }
             .map(|_| self.chan.receiver.unpark())
             .map_err(TrySendError::Full)
-    }
+    });
 
-    pub async fn send(&self, value: T) -> Result<(), SendError<T>> {
+    docs!([spsc] pub async fn send(&mut self, value: T) -> Result<(), SendError<T>> {
         let mut state = Some(value);
         self.send_inner(&mut state).await
-    }
+    });
 
-    pub fn send_blocking(&self, value: T) -> Result<(), SendError<T>> {
+    docs!([spsc] pub fn send_blocking(&mut self, value: T) -> Result<(), SendError<T>> {
         unsafe { blocking::block_on(self.send(value)) }
-    }
+    });
 
-    pub fn send_blocking_timeout(
-        &self,
+    docs!([spsc] pub fn send_blocking_timeout(
+        &mut self,
         value: T,
         timeout: Duration,
     ) -> Result<(), SendTimeoutError<T>> {
@@ -72,9 +104,9 @@ impl<T> Sender<T> {
             Some(value) => value.map_err(SendError::into),
             None => Err(SendTimeoutError::Timeout(state.take().unwrap())),
         }
-    }
+    });
 
-    pub async fn send_inner(&self, state: &mut Option<T>) -> Result<(), SendError<T>> {
+    async fn send_inner(&mut self, state: &mut Option<T>) -> Result<(), SendError<T>> {
         task::block_on!(self.chan.sender => || {
             let value = state.take().unwrap();
             match self.try_send(value) {
@@ -89,15 +121,17 @@ impl<T> Sender<T> {
     }
 }
 
+/// The receiving half of an SPSC channel.
 pub struct Receiver<T> {
     chan: rc::Receiver<Channel<T>, 1>,
     handle: bounded::Handle,
 }
 
 unsafe impl<T: Send> Send for Receiver<T> {}
+unsafe impl<T: Send> Sync for Receiver<T> {}
 
 impl<T> Receiver<T> {
-    pub fn try_recv(&self) -> Result<T, TryRecvError> {
+    docs!([spsc::bounded] pub fn try_recv(&mut self) -> Result<T, TryRecvError> {
         match unsafe { self.handle.pop(&self.chan.queue) } {
             Some(value) => {
                 self.chan.sender.unpark();
@@ -114,30 +148,26 @@ impl<T> Receiver<T> {
             }
             None => Err(TryRecvError::Empty),
         }
-    }
+    });
 
-    pub async fn recv(&self) -> Result<T, RecvError> {
+    docs!([spsc::bounded] pub async fn recv(&mut self) -> Result<T, RecvError> {
         task::block_on!(self.chan.receiver => || match self.try_recv() {
             Ok(value) => return Poll::Ready(Ok(value)),
             Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
             Err(TryRecvError::Empty) => Poll::Pending,
         })
-    }
+    });
 
-    pub fn recv_blocking(&self) -> Result<T, RecvError> {
+    docs!([spsc::bounded] pub fn recv_blocking(&mut self) -> Result<T, RecvError> {
         unsafe { blocking::block_on(self.recv()) }
-    }
+    });
 
-    pub fn recv_blocking_timeout(&self, timeout: Duration) -> Result<T, RecvTimeoutError> {
+    docs!([spsc::bounded] pub fn recv_blocking_timeout(&mut self, timeout: Duration) -> Result<T, RecvTimeoutError> {
         match unsafe { blocking::block_on_timeout(self.recv(), timeout) } {
             Some(value) => value.map_err(RecvError::into),
             None => Err(RecvTimeoutError::Timeout),
         }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.chan.queue.is_empty()
-    }
+    });
 }
 
 impl<T> Drop for Sender<T> {
@@ -152,26 +182,28 @@ impl<T> Drop for Receiver<T> {
     }
 }
 
-pub fn unbounded<T>() -> (UnboundedSender<T>, UnboundedReceiver<T>) {
+docs!([spsc] pub fn unbounded<T>() -> (UnboundedSender<T>, UnboundedReceiver<T>) {
     let (tx, rx) = rc::alloc(UnboundedChannel {
         queue: unbounded::Queue::new(),
         receiver: Task::new(),
     });
 
     (UnboundedSender(tx), UnboundedReceiver(rx))
-}
+});
 
 struct UnboundedChannel<T> {
     queue: unbounded::Queue<T>,
     receiver: Task,
 }
 
+/// The sending half of an unbounded SPSC channel.
 pub struct UnboundedSender<T>(rc::Sender<UnboundedChannel<T>, 1>);
 
 unsafe impl<T: Send> Send for UnboundedSender<T> {}
+unsafe impl<T: Send> Sync for UnboundedSender<T> {}
 
 impl<T> UnboundedSender<T> {
-    pub fn send(&self, value: T) -> Result<(), SendError<T>> {
+    docs!([spsc] pub fn send(&mut self, value: T) -> Result<(), SendError<T>> {
         if self.0.is_disconnected() {
             return Err(SendError(value));
         }
@@ -179,15 +211,17 @@ impl<T> UnboundedSender<T> {
         unsafe { self.0.queue.push(value) }
         self.0.receiver.unpark();
         Ok(())
-    }
+    });
 }
 
+/// The receiving half of an unbounded SPSC channel.
 pub struct UnboundedReceiver<T>(rc::Receiver<UnboundedChannel<T>, 1>);
 
 unsafe impl<T: Send> Send for UnboundedReceiver<T> {}
+unsafe impl<T: Send> Sync for UnboundedReceiver<T> {}
 
 impl<T> UnboundedReceiver<T> {
-    pub fn try_recv(&self) -> Result<T, TryRecvError> {
+    docs!([spsc::unbounded] pub fn try_recv(&mut self) -> Result<T, TryRecvError> {
         match unsafe { self.0.queue.pop() } {
             Some(value) => Ok(value),
             None if self.0.is_disconnected() => {
@@ -195,26 +229,26 @@ impl<T> UnboundedReceiver<T> {
             }
             None => Err(TryRecvError::Empty),
         }
-    }
+    });
 
-    pub async fn recv(&self) -> Result<T, RecvError> {
+    docs!([spsc::unbounded] pub async fn recv(&mut self) -> Result<T, RecvError> {
         task::block_on!(self.0.receiver => || match self.try_recv() {
             Ok(value) => return Poll::Ready(Ok(value)),
             Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
             Err(TryRecvError::Empty) => Poll::Pending,
         })
-    }
+    });
 
-    pub fn recv_blocking(&self) -> Result<T, RecvError> {
+    docs!([spsc::unbounded] pub fn recv_blocking(&mut self) -> Result<T, RecvError> {
         unsafe { blocking::block_on(self.recv()) }
-    }
+    });
 
-    pub fn recv_blocking_timeout(&self, timeout: Duration) -> Result<T, RecvTimeoutError> {
+    docs!([spsc::unbounded] pub fn recv_blocking_timeout(&mut self, timeout: Duration) -> Result<T, RecvTimeoutError> {
         match unsafe { blocking::block_on_timeout(self.recv(), timeout) } {
             Some(value) => value.map_err(RecvError::into),
             None => Err(RecvTimeoutError::Timeout),
         }
-    }
+    });
 }
 
 impl<T> Drop for UnboundedSender<T> {

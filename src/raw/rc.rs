@@ -32,6 +32,9 @@ pub struct Sender<T, const MAX: usize = { isize::MAX as _ }> {
     rc: *mut Rc<T>,
 }
 
+unsafe impl<T: Send, const MAX: usize> Send for Sender<T, MAX> {}
+unsafe impl<T: Sync, const MAX: usize> Sync for Sender<T, MAX> {}
+
 impl<T, const MAX: usize> Sender<T, MAX> {
     /// Clones this sender.
     pub fn clone(&self) -> Sender<T, MAX> {
@@ -79,6 +82,9 @@ impl<T, const MAX: usize> Deref for Sender<T, MAX> {
 pub struct Receiver<T, const MAX: usize = { isize::MAX as _ }> {
     rc: *mut Rc<T>,
 }
+
+unsafe impl<T: Send, const MAX: usize> Send for Receiver<T, MAX> {}
+unsafe impl<T: Sync, const MAX: usize> Sync for Receiver<T, MAX> {}
 
 impl<T, const MAX: usize> Receiver<T, MAX> {
     /// Clones this receiver.

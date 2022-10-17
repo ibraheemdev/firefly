@@ -4,17 +4,21 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-pin-project-lite = "0.2.9"
-rtrb = "0.2.2"
-static_assertions = "1.1.0"
 usync = "0.2.1"
 
 [dev-dependencies]
-criterion = { version = "0.4.0", features = ["html_reports"] }
-crossbeam = "0.8.1"
+# auto-trait tests
+static_assertions = "1.1.0"
+
+# doc tests
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros"] }
+
+# benchmarks
+dry = "0.1.1"
 flume = "0.10.13"
 thingbuf = "0.1.3"
-dry = "0.1.1"
+crossbeam = "0.8.1"
+criterion = { version = "0.4.0", features = ["html_reports"] }
 
 [[bench]]
 name = "benches"
