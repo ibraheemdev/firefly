@@ -1,43 +1,6 @@
-/// All channel docs are abstracted into this giant messy macro.
 macro_rules! docs {
-    ([spsc] $($tt:tt)*) => {
-        docs!([spsc "mut tx, mut rx"] $($tt)*);
-    };
-
-    ([spsc::bounded] $($tt:tt)*) => {
-        docs!(["spsc::bounded", "bounded(2)", "try_send", "Receiver::recv", "mut tx, mut rx"] $($tt)*);
-    };
-
-    ([spsc::unbounded] $($tt:tt)*) => {
-        docs!(["spsc::unbounded", "unbounded()", "send", "UnboundedReceiver::recv", "mut tx, mut rx"] $($tt)*);
-    };
-
-    ([mpsc] $($tt:tt)*) => {
-        docs!([mpsc "tx, mut rx"] $($tt)*);
-    };
-
-    ([mpsc::bounded] $($tt:tt)*) => {
-        docs!(["mpsc::bounded", "bounded(2)", "try_send", "Receiver::recv", "tx, mut rx"] $($tt)*);
-    };
-
-    ([mpsc::unbounded] $($tt:tt)*) => {
-        docs!(["mpsc::unbounded", "unbounded()", "send", "UnboundedReceiver::recv", "tx, mut rx"] $($tt)*);
-    };
-
-    ([mpmc] $($tt:tt)*) => {
-        docs!([mpmc "tx, rx"] $($tt)*);
-    };
-
-    ([mpmc::bounded] $($tt:tt)*) => {
-        docs!(["mpmc::bounded", "bounded(2)", "try_send", "Receiver::recv", "tx, rx"] $($tt)*);
-    };
-
-    ([mpmc::unbounded] $($tt:tt)*) => {
-        docs!(["mpmc::unbounded", "unbounded()", "send", "UnboundedReceiver::recv", "tx, rx"] $($tt)*);
-    };
-
-    ([$mod:ident $idents:literal] pub fn bounded $($tt:tt)* ) => {
-#[doc = concat!(
+    ([$path:literal, $idents:literal] bounded) => {
+concat!(
 "Creates a channel of bounded capacity.
 
 This channel has a buffer that can hold at most `capacity` messages at a time.
@@ -48,7 +11,7 @@ This channel has a buffer that can hold at most `capacity` messages at a time.
 
 ```",
 "
-use firefly::{", stringify!($mod), "::bounded, TrySendError};",
+use firefly::{", $path, "::bounded, TrySendError};",
 "
 
 // create a channel that can hold at most 2 messages at a time
@@ -65,11 +28,11 @@ assert_eq!(tx.try_send(3), Err(TrySendError::Full(3)));
 // tx.send(3).await;
 ```
 "
-)]
-pub fn bounded $($tt)*
+)
     };
-    ([$mod:ident $idents:literal] pub fn unbounded $($tt:tt)* ) => {
-#[doc = concat!(
+
+    ([$path:literal, $idents:literal] unbounded) => {
+concat!(
 "Creates a channel of unbounded capacity.
 
 This channel has a growable buffer that can hold any number of messages at a time.
@@ -78,7 +41,7 @@ This channel has a growable buffer that can hold any number of messages at a tim
 
 ```",
 "
-use firefly::{", stringify!($mod), "::unbounded, TrySendError};",
+use firefly::{", $path, "::unbounded, TrySendError};",
 "
 
 # #[tokio::main] async fn main() {
@@ -100,12 +63,11 @@ while let Ok(i) = rx.recv().await {
 # }
 ```
 "
-)]
-pub fn unbounded $($tt)*
+)
     };
 
-    ([$mod:ident $idents:literal] pub fn try_send $($tt:tt)* ) => {
-#[doc = concat!(
+    ([$path:literal, $create:literal, $send:literal, $async:literal, $idents:literal] try_send) => {
+concat!(
 "Attempts to send a message into the channel without blocking.
 
 This method will either send a message into the channel immediately or return an error
@@ -114,7 +76,7 @@ if the channel is full or disconnected. The returned error contains the original
 # Examples
 
 ```
-use firefly::{", stringify!($mod), "::bounded, TrySendError};",
+use firefly::{", $path, ", TrySendError};",
 "
 
 let (", $idents, ") = bounded(2);
@@ -129,12 +91,11 @@ assert_eq!(tx.try_send(3), Err(TrySendError::Full(3)));
 // or the receiver is disconnected
 drop(rx);
 assert_eq!(tx.try_send(3), Err(TrySendError::Disconnected(3)));"
-)]
-pub fn try_send $($tt)*
+)
     };
 
-    ([$mod:ident $idents:literal] pub fn send $($tt:tt)* ) => {
-#[doc = concat!(
+    ([$path:literal, "unbounded()", $send:literal, $async:literal, $idents:literal] send) => {
+concat!(
 "Sends a message on this channel without blocking.
 
 This method never blocks because the channel is unbounded and can never be full. If the receiver
@@ -144,7 +105,7 @@ is disconnected, an error will be returned containing the original message.
 
 ```
 # use tokio::{task, time::sleep};
-use firefly::{", stringify!($mod), "::unbounded, SendError};",
+use firefly::{", $path, ", SendError};",
 "
 # #[tokio::main] async fn main() {
 
@@ -169,12 +130,11 @@ for i in 0.. {
 }
 # }
 ```"
-)]
-pub fn send $($tt)*
+)
     };
 
-    ([$mod:ident $idents:literal] pub async fn send $($tt:tt)* ) => {
-#[doc = concat!(
+    ([$path:literal, "bounded(2)", $send:literal, $async:literal, $idents:literal] send) => {
+concat!(
 "Blocks the current task until a message is sent.
 
 If the channel is full, this call will asynchronously wait until capacity frees up.
@@ -186,7 +146,7 @@ The returned error contains the original message.
 ```
 # use std::time::Duration;
 # use tokio::{task, time::sleep};
-use firefly::{", stringify!($mod), "::bounded, SendError};",
+use firefly::{", $path, ", SendError};",
 "
 # #[tokio::main] async fn main() {
 
@@ -210,12 +170,11 @@ assert_eq!(tx.send(3).await, Ok(()));
 assert_eq!(tx.send(4).await, Err(SendError(4)));
 # }
 ```"
-)]
-pub async fn send $($tt)*
+)
     };
 
-    ([$mod:ident $idents:literal] pub fn send_blocking $($tt:tt)* ) => {
-#[doc = concat!(
+    ([$path:literal, $create:literal, $send:literal, $async:literal, $idents:literal] send_blocking) => {
+concat!(
 "Blocks the current thread until a message is sent.
 
 If the channel is full, this call will block until capacity frees up. If the receiver
@@ -232,7 +191,7 @@ asynchronous context, the [`send`] method should be used instead.
 ```
 # use std::time::Duration;
 # use std::thread;
-use firefly::{", stringify!($mod), "::bounded, SendError};",
+use firefly::{", $path, ", SendError};",
 "
 
 let (", $idents, ") = bounded(2);
@@ -254,12 +213,11 @@ assert_eq!(tx.send_blocking(3), Ok(()));
 // tries to wait, but errors after 1 second when the receiver disconnects
 assert_eq!(tx.send_blocking(4), Err(SendError(4)));
 ```"
-)]
-pub fn send_blocking $($tt)*
+)
     };
 
-    ([$mod:ident $idents:literal] pub fn send_blocking_timeout $($tt:tt)* ) => {
-#[doc = concat!(
+    ([$path:literal, $create:literal, $send:literal, $async:literal, $idents:literal] send_blocking_timeout) => {
+concat!(
 "Blocks the current thread until a message is sent or the timeout expires.
 
 If the channel is full, this call will asynchronously wait until capacity frees up, or the
@@ -278,7 +236,7 @@ async runtime should be used instead.
 # use std::thread;
 # use std::time::Duration;",
 "
-use firefly::{", stringify!($mod), "::bounded, SendTimeoutError};",
+use firefly::{", $path, ", SendTimeoutError};",
 "
 
 let (", $idents, ") = bounded(2);
@@ -312,12 +270,11 @@ assert_eq!(
     Err(SendTimeoutError::Disconnected(5)),
 );
 ```"
-)]
-pub fn send_blocking_timeout $($tt)*
+)
     };
 
-    ([$path:literal, $create:literal, $send:literal, $async:literal, $idents:literal] pub fn try_recv $($tt:tt)* ) => {
-#[doc = concat!(
+    ([$path:literal, $create:literal, $send:literal, $async:literal, $idents:literal] try_recv) => {
+concat!(
 "Attempts to receive a message from the channel without blocking.
 
 This method will either receive a message from the channel immediately or return an error
@@ -344,12 +301,11 @@ assert_eq!(rx.try_recv(), Ok(1));
 // the channel is empty and disconnected
 assert_eq!(rx.try_recv(), Err(TryRecvError::Disconnected));
 ```"
-)]
-pub fn try_recv $($tt)*
+)
     };
 
-    ([$path:literal, $create:literal, $send:literal, $async:literal, $idents:literal] pub async fn recv $($tt:tt)* ) => {
-#[doc = concat!(
+    ([$path:literal, $create:literal, $send:literal, $async:literal, $idents:literal] recv) => {
+concat!(
 "Blocks the current task until a message is received.
 
 If the channel is empty, this call will asynchronously wait until a message is sent. If the sender
@@ -380,12 +336,11 @@ assert_eq!(rx.recv().await, Ok(1));
 assert_eq!(rx.recv().await, Err(RecvError))
 # }
 ```"
-)]
-pub async fn recv $($tt)*
+)
     };
 
-    ([$path:literal, $create:literal, $send:literal, $async:literal, $idents:literal] pub fn recv_blocking $($tt:tt)* ) => {
-#[doc = concat!(
+    ([$path:literal, $create:literal, $send:literal, $async:literal, $idents:literal] recv_blocking) => {
+concat!(
 "Blocks the current thread until a message is received.
 
 If the channel is empty, this call will block until a message is sent. If the sender
@@ -419,12 +374,11 @@ assert_eq!(rx.recv_blocking(), Ok(1));
 // the channel is now disconnected
 assert_eq!(rx.recv_blocking(), Err(RecvError))
 ```"
-)]
-pub fn recv_blocking $($tt)*
+)
     };
 
-    ([$path:literal, $create:literal, $send:literal, $async:literal, $idents:literal] pub fn recv_blocking_timeout $($tt:tt)* ) => {
-#[doc = concat!(
+    ([$path:literal, $create:literal, $send:literal, $async:literal, $idents:literal] recv_blocking_timeout) => {
+concat!(
 "Blocks the current thread until a message is received or the timeout expires.
 
 If the channel is empty, this call will block until a message is sent. If the sender
@@ -470,9 +424,44 @@ assert_eq!(
     Err(RecvTimeoutError::Disconnected),
 );
 ```"
-)]
-pub fn recv_blocking_timeout $($tt)*
+)
     };
-}
 
+    (spsc::$func:ident) => {
+        docs!(["spsc", "mut tx, mut rx"] $func)
+    };
+
+    (spsc::bounded::$func:ident) => {
+        docs!(["spsc::bounded", "bounded(2)", "try_send", "Receiver::recv", "mut tx, mut rx"] $func)
+    };
+
+    (spsc::unbounded::$func:ident) => {
+        docs!(["spsc::unbounded", "unbounded()", "send", "UnboundedReceiver::recv", "mut tx, mut rx"] $func)
+    };
+
+    (mpsc::$func:ident) => {
+        docs!(["mpsc", "tx, mut rx"] $func)
+    };
+
+    (mpsc::bounded::$func:ident) => {
+        docs!(["mpsc::bounded", "bounded(2)", "try_send", "Receiver::recv", "tx, mut rx"] $func)
+    };
+
+    (mpsc::unbounded::$func:ident) => {
+        docs!(["mpsc::unbounded", "unbounded()", "send", "UnboundedReceiver::recv", "tx, mut rx"] $func)
+    };
+
+    (mpmc::$func:ident) => {
+        docs!(["mpmc", "tx, rx"] $func)
+    };
+
+    (mpmc::bounded::$func:ident) => {
+        docs!(["mpmc::bounded", "bounded(2)", "try_send", "Receiver::recv", "tx, rx"] $func)
+    };
+
+    (mpmc::unbounded::$func:ident) => {
+        docs!(["mpmc::unbounded", "unbounded()", "send", "UnboundedReceiver::recv", "tx, rx"] $func)
+    };
+
+}
 pub(crate) use docs;

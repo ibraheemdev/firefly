@@ -49,7 +49,8 @@ use crate::raw::{blocking, rc};
 use std::task::Poll;
 use std::time::Duration;
 
-docs!([mpmc] pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
+#[doc = docs!(mpmc::bounded)]
+pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
     let (tx, rx) = rc::alloc(Channel {
         queue: bounded::Queue::new(capacity),
         receivers: TaskQueue::new(),
@@ -57,7 +58,7 @@ docs!([mpmc] pub fn bounded<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
     });
 
     (Sender(tx), Receiver(rx))
-});
+}
 
 struct Channel<T> {
     queue: bounded::Queue<T>,
@@ -74,7 +75,8 @@ unsafe impl<T: Send> Send for Sender<T> {}
 unsafe impl<T: Send> Sync for Sender<T> {}
 
 impl<T> Sender<T> {
-    docs!([mpmc] pub fn try_send(&self, value: T) -> Result<(), TrySendError<T>> {
+    #[doc = docs!(mpmc::bounded::try_send)]
+    pub fn try_send(&self, value: T) -> Result<(), TrySendError<T>> {
         if self.0.is_disconnected() {
             return Err(TrySendError::Disconnected(value));
         }
@@ -84,18 +86,21 @@ impl<T> Sender<T> {
             .push(value)
             .map(|_| self.0.receivers.unpark_one())
             .map_err(TrySendError::Full)
-    });
+    }
 
-    docs!([mpmc] pub async fn send(&self, value: T) -> Result<(), SendError<T>> {
+    #[doc = docs!(mpmc::bounded::send)]
+    pub async fn send(&self, value: T) -> Result<(), SendError<T>> {
         let mut state = Some(value);
         self.send_inner(&mut state).await
-    });
+    }
 
-    docs!([mpmc] pub fn send_blocking(&self, value: T) -> Result<(), SendError<T>> {
+    #[doc = docs!(mpmc::bounded::send_blocking)]
+    pub fn send_blocking(&self, value: T) -> Result<(), SendError<T>> {
         unsafe { blocking::block_on(self.send(value)) }
-    });
+    }
 
-    docs!([mpmc] pub fn send_blocking_timeout(
+    #[doc = docs!(mpmc::bounded::send_blocking_timeout)]
+    pub fn send_blocking_timeout(
         &self,
         value: T,
         timeout: Duration,
@@ -106,7 +111,7 @@ impl<T> Sender<T> {
             Some(value) => value.map_err(SendError::into),
             None => Err(SendTimeoutError::Timeout(state.take().unwrap())),
         }
-    });
+    }
 
     async fn send_inner(&self, state: &mut Option<T>) -> Result<(), SendError<T>> {
         queue::block_on!(self.0.senders => {
@@ -122,7 +127,7 @@ impl<T> Sender<T> {
                 }
             },
             should_park: || self.0.queue.is_full()
-        });
+        })
     }
 }
 
@@ -135,7 +140,8 @@ unsafe impl<T: Send> Send for Receiver<T> {}
 unsafe impl<T: Send> Sync for Receiver<T> {}
 
 impl<T> Receiver<T> {
-    docs!([mpmc::bounded] pub fn try_recv(&self) -> Result<T, TryRecvError> {
+    #[doc = docs!(mpmc::bounded::try_recv)]
+    pub fn try_recv(&self) -> Result<T, TryRecvError> {
         match self.0.queue.pop() {
             Some(value) => {
                 self.0.senders.unpark_one();
@@ -150,9 +156,10 @@ impl<T> Receiver<T> {
             },
             None => Err(TryRecvError::Empty),
         }
-    });
+    }
 
-    docs!([mpmc::bounded] pub async fn recv(&self) -> Result<T, RecvError> {
+    #[doc = docs!(mpmc::bounded::recv)]
+    pub async fn recv(&self) -> Result<T, RecvError> {
         queue::block_on!(self.0.receivers => {
             poll: || match self.try_recv() {
                 Ok(value) => Poll::Ready(Ok(value)),
@@ -161,18 +168,20 @@ impl<T> Receiver<T> {
             },
             should_park: || self.0.queue.is_empty()
         })
-    });
+    }
 
-    docs!([mpmc::bounded] pub fn recv_blocking(&self) -> Result<T, RecvError> {
+    #[doc = docs!(mpmc::bounded::recv_blocking)]
+    pub fn recv_blocking(&self) -> Result<T, RecvError> {
         unsafe { blocking::block_on(self.recv()) }
-    });
+    }
 
-    docs!([mpmc::bounded] pub fn recv_blocking_timeout(&self, timeout: Duration) -> Result<T, RecvTimeoutError> {
+    #[doc = docs!(mpmc::bounded::recv_blocking_timeout)]
+    pub fn recv_blocking_timeout(&self, timeout: Duration) -> Result<T, RecvTimeoutError> {
         match unsafe { blocking::block_on_timeout(self.recv(), timeout) } {
             Some(value) => value.map_err(RecvError::into),
             None => Err(RecvTimeoutError::Timeout),
         }
-    });
+    }
 }
 
 impl<T> Clone for Sender<T> {
@@ -199,14 +208,15 @@ impl<T> Drop for Receiver<T> {
     }
 }
 
-docs!([mpmc] pub fn unbounded<T>() -> (UnboundedSender<T>, UnboundedReceiver<T>) {
+#[doc = docs!(mpmc::unbounded)]
+pub fn unbounded<T>() -> (UnboundedSender<T>, UnboundedReceiver<T>) {
     let (tx, rx) = rc::alloc(UnboundedChannel {
         queue: unbounded::Queue::new(),
         receivers: TaskQueue::new(),
     });
 
     (UnboundedSender(tx), UnboundedReceiver(rx))
-});
+}
 
 struct UnboundedChannel<T> {
     queue: unbounded::Queue<T>,
@@ -222,7 +232,8 @@ unsafe impl<T: Send> Send for UnboundedSender<T> {}
 unsafe impl<T: Send> Sync for UnboundedSender<T> {}
 
 impl<T> UnboundedSender<T> {
-    docs!([mpmc] pub fn send(&self, value: T) -> Result<(), SendError<T>> {
+    #[doc = docs!(mpmc::unbounded::send)]
+    pub fn send(&self, value: T) -> Result<(), SendError<T>> {
         if self.0.is_disconnected() {
             return Err(SendError(value));
         }
@@ -230,7 +241,7 @@ impl<T> UnboundedSender<T> {
         self.0.queue.push(value);
         self.0.receivers.unpark_one();
         Ok(())
-    });
+    }
 }
 
 /// The receiving half of an unbounded MPMC channnel.
@@ -242,7 +253,8 @@ unsafe impl<T: Send> Send for UnboundedReceiver<T> {}
 unsafe impl<T: Send> Sync for UnboundedReceiver<T> {}
 
 impl<T> UnboundedReceiver<T> {
-    docs!([mpmc::unbounded] pub fn try_recv(&self) -> Result<T, TryRecvError> {
+    #[doc = docs!(mpmc::unbounded::try_recv)]
+    pub fn try_recv(&self) -> Result<T, TryRecvError> {
         match self.0.queue.pop() {
             Some(value) => Ok(value),
             None if self.0.is_disconnected() => {
@@ -250,9 +262,10 @@ impl<T> UnboundedReceiver<T> {
             }
             None => Err(TryRecvError::Empty),
         }
-    });
+    }
 
-    docs!([mpmc::unbounded] pub async fn recv(&self) -> Result<T, RecvError> {
+    #[doc = docs!(mpmc::unbounded::recv)]
+    pub async fn recv(&self) -> Result<T, RecvError> {
         queue::block_on!(self.0.receivers => {
             poll: || match self.try_recv() {
                 Ok(value) => Poll::Ready(Ok(value)),
@@ -261,18 +274,20 @@ impl<T> UnboundedReceiver<T> {
             },
             should_park: || self.0.queue.is_empty()
         })
-    });
+    }
 
-    docs!([mpmc::unbounded] pub fn recv_blocking(&self) -> Result<T, RecvError> {
+    #[doc = docs!(mpmc::unbounded::recv_blocking)]
+    pub fn recv_blocking(&self) -> Result<T, RecvError> {
         unsafe { blocking::block_on(self.recv()) }
-    });
+    }
 
-    docs!([mpmc::unbounded] pub fn recv_blocking_timeout(&self, timeout: Duration) -> Result<T, RecvTimeoutError> {
+    #[doc = docs!(mpmc::unbounded::recv_blocking_timeout)]
+    pub fn recv_blocking_timeout(&self, timeout: Duration) -> Result<T, RecvTimeoutError> {
         match unsafe { blocking::block_on_timeout(self.recv(), timeout) } {
             Some(value) => value.map_err(RecvError::into),
             None => Err(RecvTimeoutError::Timeout),
         }
-    });
+    }
 }
 
 impl<T> Clone for UnboundedSender<T> {
