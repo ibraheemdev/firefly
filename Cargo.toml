@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+crossbeam-utils = "0.8.12"
 usync = "0.2.1"
 
 [dev-dependencies]

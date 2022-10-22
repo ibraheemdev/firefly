@@ -36,13 +36,13 @@ struct Task {
 ///
 // This is a macro for better inlining behavior (which seems hit and miss with async fns)
 macro_rules! block_on {
-    ($queue:expr => { poll: || $poll:expr, should_park: || $should_park:expr }) => {{
+    ($queue:expr => { poll: || $poll:expr, unpark: || $unpark:expr }) => {{
         loop {
             match { $poll } {
                 Poll::Ready(value) => return value,
                 Poll::Pending => {
                     std::hint::spin_loop();
-                    $queue.park(|| $should_park).await;
+                    $queue.park(|| $unpark).await;
                 }
             }
         }
@@ -66,15 +66,12 @@ impl TaskQueue {
     }
 
     /// Block the current task until it is unparked by another thread.
-    pub fn park<'a>(
-        &'a self,
-        should_park: impl FnOnce() -> bool + 'a,
-    ) -> impl Future<Output = ()> + 'a {
+    pub fn park<'a>(&'a self, unpark: impl FnOnce() -> bool + 'a) -> impl Future<Output = ()> + 'a {
         UnsafeSend(async move {
             self.pending.inner().fetch_add(1, Ordering::Acquire);
             let mut tasks = self.tasks.lock();
 
-            if !should_park() {
+            if unpark() {
                 drop(tasks);
                 self.pending.inner().fetch_sub(1, Ordering::Relaxed);
                 return;

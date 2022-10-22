@@ -55,12 +55,12 @@ impl<T> Queue<T> {
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.elements.is_empty()
+    pub fn can_push(&self) -> bool {
+        self.free.can_pop()
     }
 
-    pub fn is_full(&self) -> bool {
-        self.free.is_empty()
+    pub fn can_pop(&self) -> bool {
+        self.elements.can_pop()
     }
 }
 
@@ -166,6 +166,22 @@ impl IndexQueue {
         }
     }
 
+    pub fn can_pop(&self) -> bool {
+        let slots = self.slots.len();
+
+        // load the current head
+        let head = self.head.load(Ordering::Relaxed);
+        let head_index = head & (slots - 1);
+        let head_cycle = (head << 1) | cycle_mask!(slots);
+
+        // load the current slot
+        let slot = unsafe { self.slots.get_unchecked(head_index).load(Ordering::Relaxed) };
+        let slot_cycle = slot | cycle_mask!(slots);
+
+        // if cycles match, we can read from the slot
+        slot_cycle == head_cycle
+    }
+
     pub fn pop(&self) -> Option<usize> {
         let slots = self.slots.len();
 
@@ -267,10 +283,6 @@ impl IndexQueue {
                 break;
             }
         }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.tail.load(Ordering::Acquire) <= self.head.load(Ordering::Acquire)
     }
 }
 

@@ -123,7 +123,7 @@ impl<T> Sender<T> {
                     }
                 }
             },
-            should_park: || !self.0.queue.can_push()
+            unpark: || { self.0.queue.can_push() || self.0.is_disconnected() }
         })
     }
 }
@@ -155,7 +155,7 @@ impl<T> Receiver<T> {
 
     #[doc = docs!(mpsc::bounded::recv)]
     pub async fn recv(&mut self) -> Result<T, RecvError> {
-        task::block_on!(self.0.receiver => || match self.try_recv() {
+        task::await_on!(self.0.receiver => || match self.try_recv() {
             Ok(value) => return Poll::Ready(Ok(value)),
             Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
             Err(TryRecvError::Empty) => Poll::Pending,
@@ -250,7 +250,7 @@ impl<T> UnboundedReceiver<T> {
 
     #[doc = docs!(mpsc::unbounded::recv)]
     pub async fn recv(&mut self) -> Result<T, RecvError> {
-        task::block_on!(self.0.receiver => || match self.try_recv() {
+        task::await_on!(self.0.receiver => || match self.try_recv() {
             Ok(value) => return Poll::Ready(Ok(value)),
             Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
             Err(TryRecvError::Empty) => Poll::Pending,

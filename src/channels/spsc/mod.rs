@@ -33,7 +33,7 @@ mod unbounded;
 use crate::docs::docs;
 use crate::error::*;
 use crate::raw::parking::task::{self, Task};
-use crate::raw::{blocking, rc};
+use crate::raw::rc;
 
 use std::task::Poll;
 use std::time::Duration;
@@ -89,12 +89,13 @@ impl<T> Sender<T> {
     #[doc = docs!(spsc::bounded::send)]
     pub async fn send(&mut self, value: T) -> Result<(), SendError<T>> {
         let mut state = Some(value);
-        self.send_inner(&mut state).await
+        task::await_on!(self.chan.sender => || self.poll_send(&mut state))
     }
 
     #[doc = docs!(spsc::bounded::send_blocking)]
     pub fn send_blocking(&mut self, value: T) -> Result<(), SendError<T>> {
-        unsafe { blocking::block_on(self.send(value)) }
+        let mut state = Some(value);
+        task::block_on!(self.chan.sender => || self.poll_send(&mut state))
     }
 
     #[doc = docs!(spsc::bounded::send_blocking_timeout)]
@@ -104,25 +105,21 @@ impl<T> Sender<T> {
         timeout: Duration,
     ) -> Result<(), SendTimeoutError<T>> {
         let mut state = Some(value);
-
-        match unsafe { blocking::block_on_timeout(self.send_inner(&mut state), timeout) } {
-            Some(value) => value.map_err(SendError::into),
-            None => Err(SendTimeoutError::Timeout(state.take().unwrap())),
-        }
+        task::block_on_timeout!(timeout, self.chan.sender => || self.poll_send(&mut state))
+            .ok_or_else(|| SendTimeoutError::Timeout(state.take().unwrap()))
+            .and_then(|val| val.map_err(SendError::into))
     }
 
-    async fn send_inner(&mut self, state: &mut Option<T>) -> Result<(), SendError<T>> {
-        task::block_on!(self.chan.sender => || {
-            let value = state.take().unwrap();
-            match self.try_send(value) {
-                Ok(()) => Poll::Ready(Ok(())),
-                Err(TrySendError::Disconnected(value)) => Poll::Ready(Err(SendError(value))),
-                Err(TrySendError::Full(value)) => {
-                    *state = Some(value);
-                    Poll::Pending
-                }
+    fn poll_send(&mut self, state: &mut Option<T>) -> Poll<Result<(), SendError<T>>> {
+        let value = state.take().unwrap();
+        match self.try_send(value) {
+            Ok(()) => Poll::Ready(Ok(())),
+            Err(TrySendError::Disconnected(value)) => Poll::Ready(Err(SendError(value))),
+            Err(TrySendError::Full(value)) => {
+                *state = Some(value);
+                Poll::Pending
             }
-        })
+        }
     }
 }
 
@@ -158,23 +155,26 @@ impl<T> Receiver<T> {
 
     #[doc = docs!(spsc::bounded::recv)]
     pub async fn recv(&mut self) -> Result<T, RecvError> {
-        task::block_on!(self.chan.receiver => || match self.try_recv() {
-            Ok(value) => return Poll::Ready(Ok(value)),
-            Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
-            Err(TryRecvError::Empty) => Poll::Pending,
-        })
+        task::await_on!(self.chan.receiver => || self.poll_recv())
     }
 
     #[doc = docs!(spsc::bounded::recv_blocking)]
     pub fn recv_blocking(&mut self) -> Result<T, RecvError> {
-        unsafe { blocking::block_on(self.recv()) }
+        task::block_on!(self.chan.receiver => || self.poll_recv())
     }
 
     #[doc = docs!(spsc::bounded::recv_blocking_timeout)]
     pub fn recv_blocking_timeout(&mut self, timeout: Duration) -> Result<T, RecvTimeoutError> {
-        match unsafe { blocking::block_on_timeout(self.recv(), timeout) } {
-            Some(value) => value.map_err(RecvError::into),
-            None => Err(RecvTimeoutError::Timeout),
+        task::block_on_timeout!(timeout, self.chan.receiver => || self.poll_recv())
+            .ok_or(RecvTimeoutError::Timeout)
+            .and_then(|val| val.map_err(RecvError::into))
+    }
+
+    fn poll_recv(&mut self) -> Poll<Result<T, RecvError>> {
+        match self.try_recv() {
+            Ok(value) => return Poll::Ready(Ok(value)),
+            Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
+            Err(TryRecvError::Empty) => Poll::Pending,
         }
     }
 }
@@ -245,23 +245,26 @@ impl<T> UnboundedReceiver<T> {
 
     #[doc = docs!(spsc::unbounded::recv)]
     pub async fn recv(&mut self) -> Result<T, RecvError> {
-        task::block_on!(self.0.receiver => || match self.try_recv() {
-            Ok(value) => return Poll::Ready(Ok(value)),
-            Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
-            Err(TryRecvError::Empty) => Poll::Pending,
-        })
+        task::await_on!(self.0.receiver => || self.poll_recv())
     }
 
     #[doc = docs!(spsc::unbounded::recv_blocking)]
     pub fn recv_blocking(&mut self) -> Result<T, RecvError> {
-        unsafe { blocking::block_on(self.recv()) }
+        task::block_on!(self.0.receiver => || self.poll_recv())
     }
 
     #[doc = docs!(spsc::unbounded::recv_blocking_timeout)]
     pub fn recv_blocking_timeout(&mut self, timeout: Duration) -> Result<T, RecvTimeoutError> {
-        match unsafe { blocking::block_on_timeout(self.recv(), timeout) } {
-            Some(value) => value.map_err(RecvError::into),
-            None => Err(RecvTimeoutError::Timeout),
+        task::block_on_timeout!(timeout, self.0.receiver => || self.poll_recv())
+            .ok_or(RecvTimeoutError::Timeout)
+            .and_then(|val| val.map_err(RecvError::into))
+    }
+
+    fn poll_recv(&mut self) -> Poll<Result<T, RecvError>> {
+        match self.try_recv() {
+            Ok(value) => return Poll::Ready(Ok(value)),
+            Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
+            Err(TryRecvError::Empty) => Poll::Pending,
         }
     }
 }

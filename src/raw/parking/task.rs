@@ -16,28 +16,61 @@ pub struct Task {
 unsafe impl Send for Task {}
 unsafe impl Sync for Task {}
 
-/// Asynchronously 'block' until a resource is ready, parking the
-/// task if it is not.
-///
-// This is a macro for better inlining behavior (which seems
-// hit and miss with async fns)
-macro_rules! block_on {
+/// Asynchronously wait until a resource is ready, parking the task if it is not.
+// This is a macro for better inlining behavior, which seems hit and miss with async fns
+macro_rules! await_on {
     ($task:expr => || $poll:expr) => {{
         $crate::raw::util::poll_fn(|cx| loop {
-            if let Poll::Ready(value) = { $poll } {
-                return Poll::Ready(value);
-            }
-
-            match unsafe { $task.register(cx.waker()) } {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(_) => ::std::hint::spin_loop(),
-            }
+            break task::poll!(cx, $task => || $poll);
         })
         .await
     }};
 }
 
-pub(crate) use block_on;
+/// Block until a resource is ready, parking the thread if it is not.
+macro_rules! block_on {
+    ($task:expr => || $poll:expr) => {{
+        if let Poll::Ready(value) = { $poll } {
+            value
+        } else {
+            $crate::raw::blocking::poll_fn!(|cx| {
+                task::poll!(cx, $task => || $poll)
+            })
+        }
+    }};
+}
+
+/// Block until a resource is ready, parking the thread if it is not, until the deadline expires.
+macro_rules! block_on_timeout {
+    ($timeout:expr, $task:expr => || $poll:expr) => {{
+        if let Poll::Ready(value) = { $poll } {
+            Some(value)
+        } else {
+            $crate::raw::blocking::poll_fn_timeout!($timeout, |cx| {
+                task::poll!(cx, $task => || $poll)
+            })
+        }
+    }};
+}
+
+macro_rules! poll {
+    ($cx:ident, $task:expr => || $poll:expr) => {{
+        #[allow(unused_unsafe)]
+        if let Poll::Ready(value) = { $poll } {
+            Poll::Ready(value)
+        } else {
+            match unsafe { $task.register($cx.waker()) } {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(_) => {
+                    ::std::hint::spin_loop();
+                    continue;
+                }
+            }
+        }
+    }};
+}
+
+pub(crate) use {await_on, block_on, block_on_timeout, poll};
 
 // the task is parked
 const PARKED: u8 = 0b000;

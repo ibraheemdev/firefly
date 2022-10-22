@@ -126,7 +126,7 @@ impl<T> Sender<T> {
                     }
                 }
             },
-            should_park: || self.0.queue.is_full()
+            unpark: || { self.0.queue.can_push() || self.0.is_disconnected() }
         })
     }
 }
@@ -166,7 +166,7 @@ impl<T> Receiver<T> {
                 Err(TryRecvError::Disconnected) => Poll::Ready(Err(RecvError)),
                 Err(TryRecvError::Empty) => Poll::Pending,
             },
-            should_park: || self.0.queue.is_empty()
+            unpark: || { self.0.queue.can_pop() || self.0.is_disconnected() }
         })
     }
 
@@ -272,7 +272,7 @@ impl<T> UnboundedReceiver<T> {
                 Err(TryRecvError::Disconnected) => Poll::Ready(Err(RecvError)),
                 Err(TryRecvError::Empty) => Poll::Pending,
             },
-            should_park: || self.0.queue.is_empty()
+            unpark: || { !self.0.queue.is_empty() || self.0.is_disconnected() }
         })
     }
 

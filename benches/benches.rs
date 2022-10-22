@@ -9,29 +9,29 @@ use criterion::{criterion_group, criterion_main, BenchmarkGroup, Criterion};
 use dry::macro_for;
 
 fn run(c: &mut Criterion) {
-    // ========== MPSC/UNBOUNDED ==========
-    let mut group = c.benchmark_group("mpsc/unbounded");
-    group.sample_size(20);
-    macro_for!($X in [FireflyMpscUnbounded, FlumeUnbounded, StdMpscUnbounded, CrossbeamUnbounded] {
-        mpsc::<$X>(&mut group, None);
-    });
-    group.finish();
+    // // ========== MPSC/UNBOUNDED ==========
+    // let mut group = c.benchmark_group("mpsc/unbounded");
+    // group.sample_size(20);
+    // macro_for!($X in [FireflyMpscUnbounded, FlumeUnbounded, StdMpscUnbounded, CrossbeamUnbounded] {
+    //     mpsc::<$X>(&mut group, None);
+    // });
+    // group.finish();
 
-    // ========== MPSC/BOUNDED/UNCONTENDED ==========
-    let mut group = c.benchmark_group("mpsc/bounded/uncontended");
-    group.sample_size(20);
-    macro_for!($X in [FireflyMpsc, Flume, StdMpsc, Crossbeam, ThingbufMpsc] {
-        mpsc::<$X>(&mut group, None);
-    });
-    group.finish();
+    // // ========== MPSC/BOUNDED/UNCONTENDED ==========
+    // let mut group = c.benchmark_group("mpsc/bounded/uncontended");
+    // group.sample_size(20);
+    // macro_for!($X in [FireflyMpsc, Flume, StdMpsc, Crossbeam, ThingbufMpsc] {
+    //     mpsc::<$X>(&mut group, None);
+    // });
+    // group.finish();
 
-    // ========== MPSC/BOUNDED/CONTENDED ==========
-    let mut group = c.benchmark_group("mpsc/bounded/contended");
-    group.sample_size(20);
-    macro_for!($X in [FireflyMpsc, Flume, StdMpsc, Crossbeam, ThingbufMpsc] {
-        mpsc::<$X>(&mut group, Some(10));
-    });
-    group.finish();
+    // // ========== MPSC/BOUNDED/CONTENDED ==========
+    // let mut group = c.benchmark_group("mpsc/bounded/contended");
+    // group.sample_size(20);
+    // macro_for!($X in [FireflyMpsc, Flume, StdMpsc, Crossbeam, ThingbufMpsc] {
+    //     mpsc::<$X>(&mut group, Some(10));
+    // });
+    // group.finish();
 
     // ========== SPSC/UNBOUNDED ==========
     let mut group = c.benchmark_group("spsc/unbounded");
@@ -65,28 +65,31 @@ where
 {
     let threads = 1.max(thread::available_parallelism().unwrap().get() - 2);
     let messages = threads * 50_000;
-    let capacity = load.map(|load| messages / load).unwrap_or(messages);
+    let capacity = load
+        .map(|load| messages / load)
+        .unwrap_or(messages)
+        .next_power_of_two();
 
     g.bench_function(C::NAME, |b| {
         b.iter(|| {
-            let (tx, rx) = C::new(Some(capacity));
+            let (tx, mut rx) = C::new(Some(capacity));
             let barrier = Arc::new(Barrier::new(threads + 1));
 
             thread::scope(|scope| {
                 for _ in 0..threads {
-                    let tx = tx.clone();
+                    let mut tx = tx.clone();
                     let barrier = barrier.clone();
                     scope.spawn(move || {
                         barrier.wait();
                         for i in 0..messages / threads {
-                            tx.send_blocking(i).unwrap();
+                            tx._send(i).unwrap();
                         }
                     });
                 }
 
                 barrier.wait();
                 for _ in 0..messages {
-                    rx.recv_blocking().unwrap();
+                    rx._recv().unwrap();
                 }
             });
         })
@@ -98,11 +101,14 @@ where
     C: Chan<usize>,
 {
     let messages = 500_000;
-    let capacity = load.map(|load| messages / load).unwrap_or(messages);
+    let capacity = load
+        .map(|load| messages / load)
+        .unwrap_or(messages)
+        .next_power_of_two();
 
     g.bench_function(C::NAME, |b| {
         b.iter(|| {
-            let (tx, rx) = C::new(Some(capacity));
+            let (mut tx, mut rx) = C::new(Some(capacity));
             let barrier = Arc::new(Barrier::new(2));
 
             thread::scope(|scope| {
@@ -111,14 +117,14 @@ where
                     move || {
                         barrier.wait();
                         for i in 0..messages {
-                            tx.send_blocking(i).unwrap();
+                            tx._send(i).unwrap();
                         }
                     }
                 });
 
                 barrier.wait();
                 for _ in 0..messages {
-                    rx.recv_blocking().unwrap();
+                    rx._recv().unwrap();
                 }
             });
         })

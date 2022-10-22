@@ -95,7 +95,7 @@ impl<T> Drop for Queue<T> {
     }
 }
 
-const SLOTS: usize = 128;
+const SLOTS: usize = 1024;
 
 struct Block<T> {
     slots: [Slot<T>; SLOTS],

@@ -11,11 +11,11 @@ pub trait Chan<T> {
 }
 
 pub trait Sender<T>: Send {
-    fn send_blocking(&self, value: T) -> Result<(), ()>;
+    fn _send(&mut self, value: T) -> Result<(), ()>;
 }
 
 pub trait Receiver<T> {
-    fn recv_blocking(&self) -> Result<T, ()>;
+    fn _recv(&mut self) -> Result<T, ()>;
 }
 
 // std::sync::mpsc
@@ -78,7 +78,7 @@ macro_rules! impl_chan {
 macro_rules! impl_receiver {
     ($($rx:ty => |$x:ident| $recv:expr),*) => {
         $(impl<T: Clone + Default> Receiver<T> for $rx {
-            fn recv_blocking(&self) -> Result<T, ()> {
+            fn _recv(&mut self) -> Result<T, ()> {
                 let $x = self;
                 $recv
             }
@@ -92,7 +92,7 @@ macro_rules! impl_receiver {
 macro_rules! impl_sender {
     ($($tx:ty => |$x:ident, $val:ident| $send:expr),*) => {
         $(impl<T: Clone + Default + Send + Sync> Sender<T> for $tx {
-            fn send_blocking(&self, $val: T) -> Result<(), ()> {
+            fn _send(&mut self, $val: T) -> Result<(), ()> {
                 let $x = self;
                 $send
             }
