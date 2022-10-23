@@ -85,7 +85,7 @@ macro_rules! impl_receiver {
         })*
     };
     ($($rx:ty => $recv:ident),*) => {
-        $(impl_receiver! { $rx => |x| x.$recv().map_err(drop) })*
+        $(impl_receiver! { $rx => |x| x.$recv().map_err(|e| panic!("{e:?}")) })*
     };
 }
 
