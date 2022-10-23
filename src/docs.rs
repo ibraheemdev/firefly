@@ -451,6 +451,18 @@ assert_eq!(
         docs!(["mpsc::unbounded", "unbounded()", "send", "UnboundedReceiver::recv", "tx, mut rx"] $func)
     };
 
+    (spmc::$func:ident) => {
+        docs!(["spmc", "tx, rx"] $func)
+    };
+
+    (spmc::bounded::$func:ident) => {
+        docs!(["spmc::bounded", "bounded(2)", "try_send", "Receiver::recv", "mut tx, rx"] $func)
+    };
+
+    (spmc::unbounded::$func:ident) => {
+        docs!(["spmc::unbounded", "unbounded()", "send", "UnboundedReceiver::recv", "mut tx, rx"] $func)
+    };
+
     (mpmc::$func:ident) => {
         docs!(["mpmc", "tx, rx"] $func)
     };
