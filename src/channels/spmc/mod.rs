@@ -151,7 +151,7 @@ impl<T> Receiver<T> {
 
     #[doc = docs!(spmc::bounded::recv)]
     pub async fn recv(&self) -> Result<T, RecvError> {
-        queue::block_on!(self.0.receivers => {
+        queue::await_on!(self.0.receivers => {
             poll: || match self.try_recv() {
                 Ok(value) => Poll::Ready(Ok(value)),
                 Err(TryRecvError::Disconnected) => Poll::Ready(Err(RecvError)),
@@ -251,7 +251,7 @@ impl<T> UnboundedReceiver<T> {
 
     #[doc = docs!(spmc::unbounded::recv)]
     pub async fn recv(&self) -> Result<T, RecvError> {
-        queue::block_on!(self.0.receivers => {
+        queue::await_on!(self.0.receivers => {
             poll: || match self.try_recv() {
                 Ok(value) => Poll::Ready(Ok(value)),
                 Err(TryRecvError::Disconnected) => Poll::Ready(Err(RecvError)),

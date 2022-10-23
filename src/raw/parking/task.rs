@@ -38,15 +38,11 @@ macro_rules! block_on {
             })
         }
     }};
-}
-
-/// Block until a resource is ready, parking the thread if it is not, until the deadline expires.
-macro_rules! block_on_timeout {
     ($timeout:expr, $task:expr => || $poll:expr) => {{
         if let Poll::Ready(value) = { $poll } {
             Some(value)
         } else {
-            $crate::raw::blocking::poll_fn_timeout!($timeout, |cx| {
+            $crate::raw::blocking::poll_fn!($timeout, |cx| {
                 task::poll!(cx, $task => || $poll)
             })
         }
@@ -70,7 +66,7 @@ macro_rules! poll {
     }};
 }
 
-pub(crate) use {await_on, block_on, block_on_timeout, poll};
+pub(crate) use {await_on, block_on, poll};
 
 // the task is parked
 const PARKED: u8 = 0b000;
@@ -121,12 +117,11 @@ impl Task {
             }
 
             // try to acquire the registration lock
-            match self.state.inner().compare_exchange(
-                state,
-                state | REGISTERING,
-                Ordering::Acquire,
-                Ordering::Acquire,
-            ) {
+            match self
+                .state
+                .inner()
+                .compare_exchange(state, state | REGISTERING, Ordering::Acquire, Ordering::Acquire)
+            {
                 Ok(_) => {
                     // safety: we hold the lock
                     *self.waker.get() = Some(waker.clone());
@@ -149,10 +144,7 @@ impl Task {
                 }
                 // failed to acquire the lock, someone is trying to wake the old task
                 Err(found) => {
-                    assert!(
-                        found == (UNPARKED | WAKING) || found == UNPARKED,
-                        "{found:08b}"
-                    );
+                    assert!(found == (UNPARKED | WAKING) || found == UNPARKED, "{found:08b}");
                     state = found
                 }
             }
@@ -225,12 +217,11 @@ impl Task {
                 new |= WAKING
             }
 
-            match self.state.inner().compare_exchange_weak(
-                state,
-                new,
-                Ordering::Release,
-                Ordering::Relaxed,
-            ) {
+            match self
+                .state
+                .inner()
+                .compare_exchange_weak(state, new, Ordering::Release, Ordering::Relaxed)
+            {
                 // set the token and acquired the lock, now we have to wake
                 Ok(PARKED) => {
                     // acquire REGISTERING

@@ -114,7 +114,7 @@ impl<T> Sender<T> {
     }
 
     async fn send_inner(&self, state: &mut Option<T>) -> Result<(), SendError<T>> {
-        queue::block_on!(self.0.senders => {
+        queue::await_on!(self.0.senders => {
             poll: || {
                 let value = state.take().unwrap();
                 match self.try_send(value) {
@@ -160,7 +160,7 @@ impl<T> Receiver<T> {
 
     #[doc = docs!(mpmc::bounded::recv)]
     pub async fn recv(&self) -> Result<T, RecvError> {
-        queue::block_on!(self.0.receivers => {
+        queue::await_on!(self.0.receivers => {
             poll: || match self.try_recv() {
                 Ok(value) => Poll::Ready(Ok(value)),
                 Err(TryRecvError::Disconnected) => Poll::Ready(Err(RecvError)),
@@ -266,7 +266,7 @@ impl<T> UnboundedReceiver<T> {
 
     #[doc = docs!(mpmc::unbounded::recv)]
     pub async fn recv(&self) -> Result<T, RecvError> {
-        queue::block_on!(self.0.receivers => {
+        queue::await_on!(self.0.receivers => {
             poll: || match self.try_recv() {
                 Ok(value) => Poll::Ready(Ok(value)),
                 Err(TryRecvError::Disconnected) => Poll::Ready(Err(RecvError)),

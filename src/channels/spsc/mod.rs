@@ -99,13 +99,9 @@ impl<T> Sender<T> {
     }
 
     #[doc = docs!(spsc::bounded::send_blocking_timeout)]
-    pub fn send_blocking_timeout(
-        &mut self,
-        value: T,
-        timeout: Duration,
-    ) -> Result<(), SendTimeoutError<T>> {
+    pub fn send_blocking_timeout(&mut self, value: T, timeout: Duration) -> Result<(), SendTimeoutError<T>> {
         let mut state = Some(value);
-        task::block_on_timeout!(timeout, self.chan.sender => || self.poll_send(&mut state))
+        task::block_on!(timeout, self.chan.sender => || self.poll_send(&mut state))
             .ok_or_else(|| SendTimeoutError::Timeout(state.take().unwrap()))
             .and_then(|val| val.map_err(SendError::into))
     }
@@ -140,15 +136,13 @@ impl<T> Receiver<T> {
                 self.chan.sender.unpark();
                 Ok(value)
             }
-            None if self.chan.is_disconnected() => {
-                match unsafe { self.handle.pop(&self.chan.queue) } {
-                    Some(value) => {
-                        self.chan.sender.unpark();
-                        Ok(value)
-                    }
-                    _ => Err(TryRecvError::Disconnected),
+            None if self.chan.is_disconnected() => match unsafe { self.handle.pop(&self.chan.queue) } {
+                Some(value) => {
+                    self.chan.sender.unpark();
+                    Ok(value)
                 }
-            }
+                _ => Err(TryRecvError::Disconnected),
+            },
             None => Err(TryRecvError::Empty),
         }
     }
@@ -165,7 +159,7 @@ impl<T> Receiver<T> {
 
     #[doc = docs!(spsc::bounded::recv_blocking_timeout)]
     pub fn recv_blocking_timeout(&mut self, timeout: Duration) -> Result<T, RecvTimeoutError> {
-        task::block_on_timeout!(timeout, self.chan.receiver => || self.poll_recv())
+        task::block_on!(timeout, self.chan.receiver => || self.poll_recv())
             .ok_or(RecvTimeoutError::Timeout)
             .and_then(|val| val.map_err(RecvError::into))
     }
@@ -236,9 +230,7 @@ impl<T> UnboundedReceiver<T> {
     pub fn try_recv(&mut self) -> Result<T, TryRecvError> {
         match unsafe { self.0.queue.pop() } {
             Some(value) => Ok(value),
-            None if self.0.is_disconnected() => {
-                unsafe { self.0.queue.pop() }.ok_or(TryRecvError::Disconnected)
-            }
+            None if self.0.is_disconnected() => unsafe { self.0.queue.pop() }.ok_or(TryRecvError::Disconnected),
             None => Err(TryRecvError::Empty),
         }
     }
@@ -255,7 +247,7 @@ impl<T> UnboundedReceiver<T> {
 
     #[doc = docs!(spsc::unbounded::recv_blocking_timeout)]
     pub fn recv_blocking_timeout(&mut self, timeout: Duration) -> Result<T, RecvTimeoutError> {
-        task::block_on_timeout!(timeout, self.0.receiver => || self.poll_recv())
+        task::block_on!(timeout, self.0.receiver => || self.poll_recv())
             .ok_or(RecvTimeoutError::Timeout)
             .and_then(|val| val.map_err(RecvError::into))
     }

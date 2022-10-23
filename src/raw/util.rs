@@ -87,6 +87,9 @@ pub unsafe trait StrictProvenance: Sized {
     fn addr(self) -> usize;
     fn with_addr(self, addr: usize) -> Self;
     fn map_addr(self, f: impl FnOnce(usize) -> usize) -> Self;
+    fn split(self, mask: usize) -> (Self, usize);
+    fn mask(self, mask: usize) -> Self;
+    fn unmask(self, mask: usize) -> usize;
 }
 
 unsafe impl<T> StrictProvenance for *mut T {
@@ -100,6 +103,18 @@ unsafe impl<T> StrictProvenance for *mut T {
 
     fn map_addr(self, f: impl FnOnce(usize) -> usize) -> Self {
         self.with_addr(f(self.addr()))
+    }
+
+    fn split(self, mask: usize) -> (Self, usize) {
+        (self.mask(mask), self.unmask(mask))
+    }
+
+    fn mask(self, mask: usize) -> Self {
+        self.map_addr(|addr| addr & mask)
+    }
+
+    fn unmask(self, mask: usize) -> usize {
+        self.addr() & !mask
     }
 }
 
@@ -128,11 +143,7 @@ where
 
 /// Pads a value to the length of a cacheline.
 #[cfg_attr(
-    any(
-        target_arch = "x86_64",
-        target_arch = "aarch64",
-        target_arch = "powerpc64",
-    ),
+    any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "powerpc64",),
     repr(align(128))
 )]
 #[cfg_attr(

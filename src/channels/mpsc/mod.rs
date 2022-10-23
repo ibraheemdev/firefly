@@ -41,7 +41,7 @@ use crate::docs::docs;
 use crate::error::*;
 use crate::raw::parking::queue::{self, TaskQueue};
 use crate::raw::parking::task::{self, Task};
-use crate::raw::{blocking, rc};
+use crate::raw::rc;
 
 use std::task::Poll;
 use std::time::Duration;
@@ -88,43 +88,43 @@ impl<T> Sender<T> {
     #[doc = docs!(mpsc::bounded::send)]
     pub async fn send(&self, value: T) -> Result<(), SendError<T>> {
         let mut state = Some(value);
-        self.send_inner(&mut state).await
+        queue::await_on!(self.0.senders => {
+            poll: || self.poll_send(&mut state),
+            unpark: || { self.0.queue.can_push() || self.0.is_disconnected() }
+        })
     }
 
     #[doc = docs!(mpsc::bounded::send_blocking)]
     pub fn send_blocking(&self, value: T) -> Result<(), SendError<T>> {
-        unsafe { blocking::block_on(self.send(value)) }
+        let mut state = Some(value);
+        queue::block_on!(self.0.senders => {
+            poll: || self.poll_send(&mut state),
+            unpark: || { self.0.queue.can_push() || self.0.is_disconnected() }
+        })
     }
 
     #[doc = docs!(mpsc::bounded::send_blocking_timeout)]
-    pub fn send_blocking_timeout(
-        &self,
-        value: T,
-        timeout: Duration,
-    ) -> Result<(), SendTimeoutError<T>> {
+    pub fn send_blocking_timeout(&self, value: T, timeout: Duration) -> Result<(), SendTimeoutError<T>> {
         let mut state = Some(value);
 
-        match unsafe { blocking::block_on_timeout(self.send_inner(&mut state), timeout) } {
-            Some(value) => value.map_err(SendError::into),
-            None => Err(SendTimeoutError::Timeout(state.take().unwrap())),
-        }
-    }
-
-    async fn send_inner(&self, state: &mut Option<T>) -> Result<(), SendError<T>> {
-        queue::block_on!(self.0.senders => {
-            poll: || {
-                let value = state.take().unwrap();
-                match self.try_send(value) {
-                    Ok(()) => Poll::Ready(Ok(())),
-                    Err(TrySendError::Disconnected(value)) => Poll::Ready(Err(SendError(value))),
-                    Err(TrySendError::Full(value)) => {
-                        *state = Some(value);
-                        Poll::Pending
-                    }
-                }
-            },
+        queue::block_on!(timeout, self.0.senders => {
+            poll: || self.poll_send(&mut state),
             unpark: || { self.0.queue.can_push() || self.0.is_disconnected() }
         })
+        .ok_or_else(|| SendTimeoutError::Timeout(state.take().unwrap()))
+        .and_then(|val| val.map_err(SendError::into))
+    }
+
+    fn poll_send(&self, state: &mut Option<T>) -> Poll<Result<(), SendError<T>>> {
+        let value = state.take().unwrap();
+        match self.try_send(value) {
+            Ok(()) => Poll::Ready(Ok(())),
+            Err(TrySendError::Disconnected(value)) => Poll::Ready(Err(SendError(value))),
+            Err(TrySendError::Full(value)) => {
+                *state = Some(value);
+                Poll::Pending
+            }
+        }
     }
 }
 
@@ -155,23 +155,26 @@ impl<T> Receiver<T> {
 
     #[doc = docs!(mpsc::bounded::recv)]
     pub async fn recv(&mut self) -> Result<T, RecvError> {
-        task::await_on!(self.0.receiver => || match self.try_recv() {
-            Ok(value) => return Poll::Ready(Ok(value)),
-            Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
-            Err(TryRecvError::Empty) => Poll::Pending,
-        })
+        task::await_on!(self.0.receiver => || self.poll_recv())
     }
 
     #[doc = docs!(mpsc::bounded::recv_blocking)]
     pub fn recv_blocking(&mut self) -> Result<T, RecvError> {
-        unsafe { blocking::block_on(self.recv()) }
+        task::block_on!(self.0.receiver => || self.poll_recv())
     }
 
     #[doc = docs!(mpsc::bounded::recv_blocking_timeout)]
     pub fn recv_blocking_timeout(&mut self, timeout: Duration) -> Result<T, RecvTimeoutError> {
-        match unsafe { blocking::block_on_timeout(self.recv(), timeout) } {
-            Some(value) => value.map_err(RecvError::into),
-            None => Err(RecvTimeoutError::Timeout),
+        task::block_on!(timeout, self.0.receiver => || self.poll_recv())
+            .ok_or(RecvTimeoutError::Timeout)
+            .and_then(|val| val.map_err(RecvError::into))
+    }
+
+    fn poll_recv(&mut self) -> Poll<Result<T, RecvError>> {
+        match self.try_recv() {
+            Ok(value) => return Poll::Ready(Ok(value)),
+            Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
+            Err(TryRecvError::Empty) => Poll::Pending,
         }
     }
 }
@@ -241,32 +244,33 @@ impl<T> UnboundedReceiver<T> {
     pub fn try_recv(&mut self) -> Result<T, TryRecvError> {
         match unsafe { self.0.queue.pop() } {
             Some(value) => Ok(value),
-            None if self.0.is_disconnected() => {
-                unsafe { self.0.queue.pop() }.ok_or(TryRecvError::Disconnected)
-            }
+            None if self.0.is_disconnected() => unsafe { self.0.queue.pop() }.ok_or(TryRecvError::Disconnected),
             None => Err(TryRecvError::Empty),
         }
     }
 
     #[doc = docs!(mpsc::unbounded::recv)]
     pub async fn recv(&mut self) -> Result<T, RecvError> {
-        task::await_on!(self.0.receiver => || match self.try_recv() {
-            Ok(value) => return Poll::Ready(Ok(value)),
-            Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
-            Err(TryRecvError::Empty) => Poll::Pending,
-        })
+        task::await_on!(self.0.receiver => || self.poll_recv())
     }
 
     #[doc = docs!(mpsc::unbounded::recv_blocking)]
     pub fn recv_blocking(&mut self) -> Result<T, RecvError> {
-        unsafe { blocking::block_on(self.recv()) }
+        task::block_on!(self.0.receiver => || self.poll_recv())
     }
 
-    #[doc = docs!(mpsc::unbounded::recv_blocking_timeout)]
+    #[doc = docs!(mpsc::bounded::recv_blocking_timeout)]
     pub fn recv_blocking_timeout(&mut self, timeout: Duration) -> Result<T, RecvTimeoutError> {
-        match unsafe { blocking::block_on_timeout(self.recv(), timeout) } {
-            Some(value) => value.map_err(RecvError::into),
-            None => Err(RecvTimeoutError::Timeout),
+        task::block_on!(timeout, self.0.receiver => || self.poll_recv())
+            .ok_or(RecvTimeoutError::Timeout)
+            .and_then(|val| val.map_err(RecvError::into))
+    }
+
+    fn poll_recv(&mut self) -> Poll<Result<T, RecvError>> {
+        match self.try_recv() {
+            Ok(value) => return Poll::Ready(Ok(value)),
+            Err(TryRecvError::Disconnected) => return Poll::Ready(Err(RecvError)),
+            Err(TryRecvError::Empty) => Poll::Pending,
         }
     }
 }
