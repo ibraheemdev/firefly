@@ -4,12 +4,11 @@ use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// Allocate a channel as a sender/receiver pair.
-pub fn alloc<T, const SENDERS: usize, const RECEIVERS: usize>(
-    chan: T,
-) -> (Sender<T, SENDERS>, Receiver<T, RECEIVERS>) {
+pub fn alloc<T, const SENDERS: usize, const RECEIVERS: usize>(chan: T) -> (Sender<T, SENDERS>, Receiver<T, RECEIVERS>) {
     let rc = Box::into_raw(Box::new(Rc {
         senders: AtomicUsize::new(1),
         receivers: AtomicUsize::new(1),
+        done: AtomicBool::new(false),
         disconnected: AtomicBool::new(false),
         chan,
     }));
@@ -23,6 +22,7 @@ pub fn alloc<T, const SENDERS: usize, const RECEIVERS: usize>(
 struct Rc<T> {
     senders: AtomicUsize,
     receivers: AtomicUsize,
+    done: AtomicBool,
     disconnected: AtomicBool,
     chan: T,
 }
@@ -54,12 +54,13 @@ impl<T, const MAX: usize> Sender<T, MAX> {
         F: FnOnce(),
     {
         if self.rc.deref().senders.fetch_sub(1, Ordering::AcqRel) == 1 {
-            let disconnected = self.rc.deref().disconnected.swap(true, Ordering::AcqRel);
+            self.rc.deref().disconnected.store(true, Ordering::Relaxed);
 
-            if disconnected {
+            disconnect();
+
+            let done = self.rc.deref().done.swap(true, Ordering::AcqRel);
+            if done {
                 let _ = Box::from_raw(self.rc);
-            } else {
-                disconnect()
             }
         }
     }
@@ -105,12 +106,13 @@ impl<T, const MAX: usize> Receiver<T, MAX> {
         F: FnOnce(),
     {
         if self.rc.deref().receivers.fetch_sub(1, Ordering::AcqRel) == 1 {
-            let disconnected = self.rc.deref().disconnected.swap(true, Ordering::AcqRel);
+            self.rc.deref().disconnected.store(true, Ordering::Relaxed);
 
-            if disconnected {
+            disconnect();
+
+            let done = self.rc.deref().done.swap(true, Ordering::AcqRel);
+            if done {
                 let _ = Box::from_raw(self.rc);
-            } else {
-                disconnect()
             }
         }
     }
