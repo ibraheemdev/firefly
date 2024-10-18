@@ -1,7 +1,9 @@
 [package]
 name = "firefly"
-version = "0.1.0"
+version = "0.0.1-beta"
 edition = "2021"
+description = "[EXPERIMENTAL]"
+license = "MIT"
 
 [dependencies]
 crossbeam-utils = "0.8.12"
