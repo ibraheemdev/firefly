@@ -1,0 +1,13 @@
+[package]
+name = "firefly-utils"
+version = "0.0.1-beta"
+edition = "2024"
+license = "MIT"
+authors = ["Ibraheem Ahmed <ibraheem@ibraheem.ca>"]
+description = "Asynchronous task notification utilities."
+repository = "https://github.com/ibraheemdev/firefly"
+keywords = ["async", "thread", "lock-free", "concurrency", "park", "wake"]
+categories = ["concurrency", "asynchronous"]
+rust-version = "1.85.0"
+
+[dependencies]

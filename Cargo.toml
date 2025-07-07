@@ -1,28 +1,18 @@
 [package]
 name = "firefly"
 version = "0.0.1-beta"
-edition = "2021"
-description = "[EXPERIMENTAL]"
+edition = "2024"
 license = "MIT"
+authors = ["Ibraheem Ahmed <ibraheem@ibraheem.ca>"]
+description = "High performance concurrent channels"
+repository = "https://github.com/ibraheemdev/firefly"
+keywords = ["channel", "fifo", "queue", "mpmc", "mpsc", "async", "thread", "lock-free"]
+categories = ["concurrency", "asynchronous", "data-structures"]
+rust-version = "1.85.0"
+
+[workspace]
+members = ["firefly-utils"]
 
 [dependencies]
-crossbeam-utils = "0.8.12"
-usync = "0.2.1"
 
 [dev-dependencies]
-# auto-trait tests
-static_assertions = "1.1.0"
-
-# doc tests
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros"] }
-
-# benchmarks
-dry = "0.1.1"
-flume = "0.10.13"
-thingbuf = "0.1.3"
-crossbeam = "0.8.1"
-criterion = { version = "0.4.0", features = ["html_reports"] }
-
-[[bench]]
-name = "benches"
-harness = false
